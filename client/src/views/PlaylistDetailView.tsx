@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { usePlaylist } from "../context/PlaylistContext";
 import { useAudio } from "../context/AudioContext";
+import { SwipeRow } from "../components/SwipeRow";
 import { useWishlist } from "../context/WishlistContext";
 import { PlaylistArt } from "../components/PlaylistArt";
 import {
@@ -40,8 +41,9 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
     removeTrackFromPlaylist,
     reorderPlaylistTracks,
     showToast,
+    openPlaylistModal,
   } = usePlaylist();
-  const { playTrack, currentTrack, addToQueue } = useAudio();
+  const { playTrack, currentTrack, addToQueue, playNext } = useAudio();
   const { isSaved, toggle } = useWishlist();
 
   const [isEditing, setIsEditing] = useState(false);
@@ -332,94 +334,102 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
               const saved = isSaved(track.id);
 
               return (
-                <div
+                <SwipeRow
                   key={`${track.id}-${idx}`}
-                  className="group grid grid-cols-[28px_minmax(0,1fr)_56px_auto] sm:grid-cols-[28px_minmax(0,1fr)_70px_auto] gap-2 sm:gap-4 items-center px-3 py-2 rounded-xl transition-colors hover:bg-card"
+                  onSwipeRight={() => openPlaylistModal(track)}
+                  onSwipeLeft={() => {
+                    playNext(track);
+                    showToast("Sera lu ensuite");
+                  }}
                 >
-                  {/* Numéro ou indicateur */}
-                  <span
-                    className={`text-sm tabular-nums ${
-                      isCurrent ? "text-accent-text font-bold" : "text-muted"
-                    }`}
+                  <div
+                    className="group grid grid-cols-[28px_minmax(0,1fr)_56px_auto] sm:grid-cols-[28px_minmax(0,1fr)_70px_auto] gap-2 sm:gap-4 items-center px-3 py-2 rounded-xl transition-colors hover:bg-card"
                   >
-                    {idx + 1}
-                  </span>
-
-                  {/* Titre & sous-titre cliquables */}
-                  <button
-                    type="button"
-                    onClick={() => playTrack(track, tracks, idx)}
-                    className="min-w-0 text-left py-1"
-                  >
+                    {/* Numéro ou indicateur */}
                     <span
-                      className={`block text-[15px] font-semibold truncate ${
-                        isCurrent ? "text-accent-text" : ""
+                      className={`text-sm tabular-nums ${
+                        isCurrent ? "text-accent-text font-bold" : "text-muted"
                       }`}
                     >
-                      {track.title}
+                      {idx + 1}
                     </span>
-                    <span className="block text-[13px] text-muted truncate">
-                      {[track.grandparentTitle, track.parentTitle].filter(Boolean).join(" · ")}
+
+                    {/* Titre & sous-titre cliquables */}
+                    <button
+                      type="button"
+                      onClick={() => playTrack(track, tracks, idx)}
+                      className="min-w-0 text-left py-1"
+                    >
+                      <span
+                        className={`block text-[15px] font-semibold truncate ${
+                          isCurrent ? "text-accent-text" : ""
+                        }`}
+                      >
+                        {track.title}
+                      </span>
+                      <span className="block text-[13px] text-muted truncate">
+                        {[track.grandparentTitle, track.parentTitle].filter(Boolean).join(" · ")}
+                      </span>
+                    </button>
+
+                    {/* Durée */}
+                    <span className="text-sm text-muted text-right tabular-nums">
+                      {formatTrackDuration(track.duration)}
                     </span>
-                  </button>
 
-                  {/* Durée */}
-                  <span className="text-sm text-muted text-right tabular-nums">
-                    {formatTrackDuration(track.duration)}
-                  </span>
+                    {/* Actions de ligne : Monter / Descendre / Cœur / Supprimer */}
+                    <div className="flex items-center gap-1 justify-end">
+                      {/* Réorganisation */}
+                      <div className="hidden sm:flex flex-col opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button
+                          type="button"
+                          disabled={idx === 0}
+                          onClick={() => reorderPlaylistTracks(playlist.id, idx, idx - 1)}
+                          aria-label="Monter"
+                          className="press w-5 h-4 grid place-items-center text-muted hover:text-fg disabled:opacity-20"
+                        >
+                          <ChevronUp className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          disabled={idx === tracks.length - 1}
+                          onClick={() => reorderPlaylistTracks(playlist.id, idx, idx + 1)}
+                          aria-label="Descendre"
+                          className="press w-5 h-4 grid place-items-center text-muted hover:text-fg disabled:opacity-20"
+                        >
+                          <ChevronDown className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
 
-                  {/* Actions de ligne : Monter / Descendre / Cœur / Supprimer */}
-                  <div className="flex items-center gap-1 justify-end">
-                    {/* Réorganisation */}
-                    <div className="hidden sm:flex flex-col opacity-0 group-hover:opacity-100 transition-opacity">
+                      {/* Cœur (Ma liste) */}
                       <button
                         type="button"
-                        disabled={idx === 0}
-                        onClick={() => reorderPlaylistTracks(playlist.id, idx, idx - 1)}
-                        aria-label="Monter"
-                        className="press w-5 h-4 grid place-items-center text-muted hover:text-fg disabled:opacity-20"
+                        onClick={() => toggle(track)}
+                        aria-pressed={saved}
+                        aria-label={saved ? "Retirer de ma liste" : "Ajouter à ma liste"}
+                        className={`press w-9 h-9 rounded-full grid place-items-center hover:bg-surface3 ${
+                          saved ? "text-accent" : "text-muted"
+                        }`}
                       >
-                        <ChevronUp className="w-3.5 h-3.5" />
+                        <Heart
+                          className={`w-4 h-4 ${saved ? "fill-current" : ""}`}
+                          strokeWidth={1.9}
+                        />
                       </button>
+
+                      {/* Retirer de la playlist */}
                       <button
                         type="button"
-                        disabled={idx === tracks.length - 1}
-                        onClick={() => reorderPlaylistTracks(playlist.id, idx, idx + 1)}
-                        aria-label="Descendre"
-                        className="press w-5 h-4 grid place-items-center text-muted hover:text-fg disabled:opacity-20"
+                        onClick={() => removeTrackFromPlaylist(playlist.id, idx)}
+                        aria-label={`Retirer ${track.title} de la playlist`}
+                        title="Retirer de la playlist"
+                        className="press w-9 h-9 rounded-full grid place-items-center text-muted hover:text-accent hover:bg-surface3"
                       >
-                        <ChevronDown className="w-3.5 h-3.5" />
+                        <Trash2 className="w-4 h-4" strokeWidth={1.9} />
                       </button>
                     </div>
-
-                    {/* Cœur (Ma liste) */}
-                    <button
-                      type="button"
-                      onClick={() => toggle(track)}
-                      aria-pressed={saved}
-                      aria-label={saved ? "Retirer de ma liste" : "Ajouter à ma liste"}
-                      className={`press w-9 h-9 rounded-full grid place-items-center hover:bg-surface3 ${
-                        saved ? "text-accent" : "text-muted"
-                      }`}
-                    >
-                      <Heart
-                        className={`w-4 h-4 ${saved ? "fill-current" : ""}`}
-                        strokeWidth={1.9}
-                      />
-                    </button>
-
-                    {/* Retirer de la playlist */}
-                    <button
-                      type="button"
-                      onClick={() => removeTrackFromPlaylist(playlist.id, idx)}
-                      aria-label={`Retirer ${track.title} de la playlist`}
-                      title="Retirer de la playlist"
-                      className="press w-9 h-9 rounded-full grid place-items-center text-muted hover:text-accent hover:bg-surface3"
-                    >
-                      <Trash2 className="w-4 h-4" strokeWidth={1.9} />
-                    </button>
                   </div>
-                </div>
+                </SwipeRow>
               );
             })}
           </div>

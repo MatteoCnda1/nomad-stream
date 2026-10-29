@@ -265,7 +265,9 @@ export function searchIndex(index, text, { limits = {} } = {}) {
       TYPE_ORDER[a.entry.type] - TYPE_ORDER[b.entry.type],
   );
 
-  const result = { ...empty, top: hits[0] ? { ...hits[0].entry.item, score: round(hits[0].score) } : null };
+  // Types exclus de la recherche (limite à 0) : ni dans les listes, ni en meilleur résultat
+  const first = hits.find((h) => (limits[h.entry.type] ?? 40) > 0);
+  const result = { ...empty, top: first ? { ...first.entry.item, score: round(first.score) } : null };
   const groups = { movie: "movies", show: "shows", artist: "artists", album: "albums", track: "tracks" };
   for (const { entry, score } of hits) {
     const list = result[groups[entry.type]];

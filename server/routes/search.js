@@ -5,20 +5,22 @@ import express from "express";
 import { buildIndex, searchIndex } from "../search.js";
 
 const LIMITS = { movie: 30, show: 30, artist: 30, album: 30, track: 60 };
+// Recherche limitée à un type (`types=artist` : barre de recherche de l'onglet Musique)
+const ONLY_LIMIT = 100;
 const GROUPS = ["movies", "shows", "artists", "albums", "tracks"];
 const EMPTY = { top: null, movies: [], shows: [], artists: [], albums: [], tracks: [] };
 
 export function searchRoutes({ plex, librarySearch }) {
   const router = express.Router();
 
-  async function plexSearch(q) {
+  async function plexSearch(q, limits) {
     const data = await plex.plexFetch(`/hubs/search?query=${encodeURIComponent(q)}&limit=15`);
     const items = (data.MediaContainer?.Hub || []).flatMap((h) => h.Metadata || []);
-    const found = searchIndex(buildIndex(items), q, { limits: LIMITS });
+    const found = searchIndex(buildIndex(items), q, { limits });
     // Films et séries que Plex a trouvés par leurs acteurs ou réalisateurs (« reason ») : gardés
     // si le nom correspond à la recherche, juste au-dessus du seuil
     for (const raw of items) {
-      if ((raw.type !== "movie" && raw.type !== "show") || !raw.reasonTitle) continue;
+      if ((raw.type !== "movie" && raw.type !== "show") || !raw.reasonTitle || !limits[raw.type]) continue;
       const person = searchIndex(buildIndex([{ ratingKey: "0", type: "artist", title: raw.reasonTitle }]), q).top;
       const list = found[raw.type === "movie" ? "movies" : "shows"];
       if (person && !list.some((m) => m.id === raw.ratingKey)) {
@@ -32,8 +34,12 @@ export function searchRoutes({ plex, librarySearch }) {
   router.get("/api/search", async (req, res) => {
     const q = typeof req.query.q === "string" ? req.query.q.slice(0, 120) : "";
     if (!q.trim()) return res.json(EMPTY);
+    const only = String(req.query.types || "").split(",").filter((t) => Object.hasOwn(LIMITS, t));
+    const limits = only.length
+      ? Object.fromEntries(Object.keys(LIMITS).map((t) => [t, only.includes(t) ? ONLY_LIMIT : 0]))
+      : LIMITS;
 
-    const [library, fromPlex] = await Promise.allSettled([librarySearch.search(q, { limits: LIMITS }), plexSearch(q)]);
+    const [library, fromPlex] = await Promise.allSettled([librarySearch.search(q, { limits }), plexSearch(q, limits)]);
     const lib = library.status === "fulfilled" ? library.value : null;
     const px = fromPlex.status === "fulfilled" ? fromPlex.value : null;
     if (!lib && !px) {
