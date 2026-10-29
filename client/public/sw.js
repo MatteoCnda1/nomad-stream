@@ -1,4 +1,4 @@
-const CACHE_NAME = 'nomad-stream-v6';
+const CACHE_NAME = 'nomad-stream-v7';
 // Vidéos téléchargées (mode hors connexion) : ce cache n'est JAMAIS purgé lors des mises à jour
 const OFFLINE_CACHE = 'nomad-offline-v1';
 const STATIC_ASSETS = [
@@ -133,8 +133,18 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // 6. Autres fichiers de l'appli (manifest, icônes)
+  // 6. Autres fichiers de l'appli (manifest, icônes) : version en cache tout de suite, mise à jour
+  //    en arrière-plan (sinon un manifest ou une icône modifiés ne seraient jamais repris)
   event.respondWith(
-    caches.match(event.request).then((cached) => cached || fetch(event.request))
+    caches.match(event.request).then((cached) => {
+      const fetched = fetch(event.request).then((networkRes) => {
+        if (networkRes.status === 200) {
+          const copy = networkRes.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
+        }
+        return networkRes;
+      }).catch(() => cached);
+      return cached || fetched;
+    })
   );
 });
