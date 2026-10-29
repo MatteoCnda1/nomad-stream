@@ -1,0 +1,4 @@
+# Labels du runner auto-hébergé (LXC nomad), pour l'analyse du workflow par actionlint
+self-hosted-runner:
+  labels:
+    - nomad

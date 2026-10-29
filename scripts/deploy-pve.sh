@@ -14,6 +14,11 @@ cd "$(dirname "$0")/.."
 
 tar -czf - --exclude=node_modules --exclude=.cache server client/dist | ssh -J "$JUMP" "root@$HOST" '
   set -e
+  # Le serveur refuse de démarrer sans PLEX_TOKEN : ne rien toucher tant que le LXC ne le fournit pas
+  if ! grep -qs "^PLEX_TOKEN=." /etc/nomad-stream.env && ! systemctl show nomad-stream -p Environment | grep -q "PLEX_TOKEN="; then
+    echo "✖ PLEX_TOKEN absent sur le LXC : lancer au préalable ./scripts/install-runner.sh" >&2
+    exit 1
+  fi
   rm -rf /opt/nomad-stream/client/dist
   tar -xzf - -C /opt/nomad-stream
   cd /opt/nomad-stream/server && npm ci --omit=dev --no-audit --no-fund --loglevel=error

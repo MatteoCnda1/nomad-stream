@@ -27,6 +27,15 @@ Créer une application **PWA (Progressive Web App)** connectée à **Plex Media 
 * **Ancienne passerelle (laptop `msi`)** : `http://100.77.169.75:3000`. **Désactivée le 28/10/2026** (service utilisateur `nomad-stream` arrêté et retiré du démarrage). Pour la relancer ponctuellement en développement : `systemctl --user start nomad-stream`.
 * **Serveur Plex Media (LXC 101 `plex`)** : `http://192.168.1.81:32400`. `pve` (`192.168.1.118`) est le routeur de sous-réseau Tailscale du LAN.
 
+### Versionnage, CI et déploiement continu
+
+* **Repo privé** : https://github.com/MatteoCnda1/nomad-stream (issues = backlog).
+* **CI** (`.github/workflows/ci.yml`) sur chaque PR : build client (`tsc` + `vite build`) et tests serveur (`npm test`) sous **Node 20** (version réelle du LXC, paquet Debian — et non 24) et Node 24.
+* **Fusion automatique** : une PR verte est fusionnée sans intervention. Pour retenir une PR (à tester sur téléphone d'abord), l'ouvrir **en brouillon**. Le plan GitHub gratuit n'autorise pas la protection de branche sur un repo privé : ne pas fusionner une PR rouge à la main.
+* **Déploiement continu** : après la fusion, le runner auto-hébergé du LXC (`nomad-lxc`, utilisateur `ghrunner`) installe la version testée via `sudo nomad-deploy` (seule commande root autorisée) : sauvegarde, installation, contrôle de santé, **retour automatique à la version précédente** si le service ne répond plus. Mise en place unique : `./scripts/install-runner.sh` (pose aussi `DEPLOY_ENABLED=true`). Redéployer `main` : `gh workflow run ci.yml --ref main`.
+* **Secrets** : `PLEX_TOKEN` (et `ACCESS_CODE` si l'auth est activée) dans `/etc/nomad-stream.env` (root, 600), lu par systemd ; jamais dans le code.
+* `./scripts/deploy-pve.sh` reste disponible pour tester une branche à la main ; le déploiement suivant de `main` l'écrase.
+
 ---
 
 ## ⚡ Architecture d'Optimisation des Performances (Audit & Résolution)
