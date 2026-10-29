@@ -14,6 +14,9 @@ const movie = (id, title) => ({
 });
 
 const IMAGE = Buffer.from("FAUSSE-IMAGE");
+// JPEG minimal en niveaux de gris (JFIF + en-tête de trame à 1 composante), comme les pochettes
+// qui font planter le transcodeur photo de Plex : image brute de /library/metadata/50/…
+export const GRAY_JPEG = Buffer.from("ffd8ffe000104a46494600010101012c012c0000ffc0000b080010001001011100ffd9", "hex");
 
 function respond(url, res) {
   const json = (data) => {
@@ -31,7 +34,7 @@ function respond(url, res) {
   }
   if (/^\/library\/metadata\/\d+\/thumb\/\d+$/.test(p)) {
     res.writeHead(200, { "Content-Type": "image/jpeg" });
-    return res.end(IMAGE);
+    return res.end(p.startsWith("/library/metadata/50/") ? GRAY_JPEG : IMAGE);
   }
   res.writeHead(404);
   res.end();
