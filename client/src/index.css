@@ -1,0 +1,228 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Thème sombre (défaut) — valeurs RGB pour supporter les modificateurs d'opacité Tailwind */
+:root {
+  --bg: 12 12 14;
+  --surface: 21 21 24;
+  --surface2: 32 32 37;
+  --surface3: 42 42 48;
+  --text: 244 244 245;
+  --muted: 163 163 171;
+  --faint: 138 138 148;
+  --accent: 229 19 29;
+  --accent-hover: 245 42 51;
+  --accent-text: 255 77 85;
+  --ok: 60 207 122;
+  --line: rgba(255, 255, 255, 0.07);
+  --line2: rgba(255, 255, 255, 0.14);
+  --accent-soft: rgba(229, 19, 29, 0.16);
+  --glass: rgba(18, 18, 22, 0.8);
+  --sk1: #1d1d22;
+  --sk2: #2b2b32;
+  --panel: var(--bg);
+  --card: var(--surface);
+  color-scheme: dark;
+}
+
+/* Thème clair */
+:root.light {
+  --bg: 236 236 240;
+  --surface: 255 255 255;
+  --surface2: 242 242 245;
+  --surface3: 232 232 236;
+  --text: 17 17 20;
+  --muted: 85 86 94;
+  --faint: 107 108 116;
+  --accent-hover: 200 15 24;
+  --accent-text: 207 15 25;
+  --ok: 23 134 74;
+  --line: rgba(12, 12, 18, 0.08);
+  --line2: rgba(12, 12, 18, 0.14);
+  --accent-soft: rgba(229, 19, 29, 0.09);
+  --glass: rgba(255, 255, 255, 0.86);
+  --sk1: #e8e8ec;
+  --sk2: #f6f6f8;
+  color-scheme: light;
+}
+
+/* Desktop : sidebar + panneau principal arrondi */
+@media (min-width: 1024px) {
+  :root {
+    --panel: var(--surface);
+    --card: var(--surface2);
+  }
+}
+
+@layer base {
+  body {
+    @apply bg-bg text-fg font-sans antialiased;
+    transition: background-color 0.4s ease, color 0.4s ease;
+  }
+  button,
+  input,
+  select {
+    font: inherit;
+    color: inherit;
+  }
+  :focus-visible {
+    outline: 2px solid rgb(var(--accent));
+    outline-offset: 2px;
+  }
+}
+
+@layer utilities {
+  /* Safe area padding utilities for mobile phones with notch */
+  .safe-top {
+    padding-top: max(1rem, env(safe-area-inset-top));
+  }
+  .safe-bottom {
+    padding-bottom: max(1rem, env(safe-area-inset-bottom));
+  }
+  .sr-only-focusable:not(:focus) {
+    @apply sr-only;
+  }
+}
+
+/* Squelettes de chargement */
+.sk {
+  background: linear-gradient(100deg, var(--sk1) 30%, var(--sk2) 50%, var(--sk1) 70%);
+  background-size: 300% 100%;
+  animation: sk 1.5s ease-in-out infinite;
+}
+@keyframes sk {
+  from { background-position: 100% 0; }
+  to { background-position: 0 0; }
+}
+
+/* Apparition du contenu */
+.anim-in,
+.animate-fadeIn {
+  animation: anim-in 0.55s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+@keyframes anim-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+
+.toast {
+  animation: toast 0.45s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+@keyframes toast {
+  from { opacity: 0; transform: translate(-50%, 12px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+
+/* Cartes : légère élévation + zoom de l'image au survol */
+.lift {
+  transition: transform 0.45s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+.zoom {
+  overflow: hidden;
+}
+.zoom .z {
+  transition: transform 0.9s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+@media (hover: hover) {
+  .lift:hover {
+    transform: translateY(-3px);
+  }
+  .lift:hover .zoom .z {
+    transform: scale(1.05);
+  }
+}
+.lift:active {
+  transform: scale(0.98);
+}
+
+/* Tuiles musique : bouton lecture qui apparaît au survol */
+.tile {
+  transition: background-color 0.25s ease;
+}
+.tile:hover {
+  background: rgb(var(--card));
+}
+.tile .fab {
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 0.3s ease, transform 0.35s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+.tile:hover .fab,
+.tile:focus-visible .fab {
+  opacity: 1;
+  transform: none;
+}
+
+.press {
+  transition: transform 0.2s ease, background-color 0.2s ease, color 0.2s ease;
+}
+.press:active {
+  transform: scale(0.96);
+}
+
+/* Interrupteur */
+.sw {
+  position: relative;
+  width: 48px;
+  height: 28px;
+  border-radius: 999px;
+  flex-shrink: 0;
+  transition: background-color 0.25s ease;
+}
+.sw > span {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  transition: transform 0.3s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+/* Curseurs (progression, volume) */
+.range {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 5px;
+  border-radius: 5px;
+  /* --range-fill / --range-track / --range-thumb : surchargeables (lecteur vidéo, toujours sombre) */
+  background: linear-gradient(var(--range-fill, rgb(var(--text))), var(--range-fill, rgb(var(--text)))) 0 / var(--pct, 0%) 100% no-repeat,
+    var(--range-track, var(--line2));
+  cursor: pointer;
+}
+.range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--range-thumb, rgb(var(--text)));
+  border: 0;
+}
+.range::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--range-thumb, rgb(var(--text)));
+  border: 0;
+}
+
+/* Hide scrollbar for carousels */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
