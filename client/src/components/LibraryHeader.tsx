@@ -33,6 +33,9 @@ export const LibraryHeader: React.FC<{
 
 export const POSTER_GRID = "grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-3.5 lg:gap-[18px]";
 
+// Grille de tuiles musique (artistes, albums, playlists)
+export const TILE_GRID = "grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-6 gap-1 lg:gap-2 -mx-2.5";
+
 export const PosterGridSkeleton: React.FC<{ count?: number }> = ({ count = 12 }) => (
   <div className={POSTER_GRID} aria-busy="true" aria-label="Chargement">
     {Array.from({ length: count }, (_, i) => (

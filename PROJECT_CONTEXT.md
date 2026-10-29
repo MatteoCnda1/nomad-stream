@@ -77,6 +77,7 @@ Créer une application **PWA (Progressive Web App)** connectée à **Plex Media 
    * Passerelle de transcodage et remuxing universel HLS Plex (`/api/stream/hls/start.m3u8`, `/api/stream/hls/session/...`, `/api/stream/hls/stop`) pour la lecture universelle des MKV et formats audio avancés (DTS, TrueHD).
    * Proxy d'images WebP haute performance avec cache disque persistant et ETag.
    * Scrobbling de la progression (`POST /api/timeline`).
+   * **Recherche approximative** (`server/search.js`, `GET /api/search`) : index en mémoire de toute la bibliothèque (films, séries, artistes, albums, titres ; ~75 ms de construction pour 2 300 éléments, ~30 ms par recherche sur 18 000), reconstruit en arrière-plan toutes les 15 min (`NOMAD_SEARCH_TTL_MIN`). Tolère les fautes de frappe (distance de Damerau-Levenshtein bornée : « daft pank », « interstelar »), les accents et la ponctuation (« beyonce », « acdc », « spiderman »), les mots dans le désordre, le mot en cours de frappe ; un artiste renvoie aussi ses albums et ses titres, un film son titre original, son réalisateur et son année. Complété par la recherche de Plex (ajouts depuis la dernière indexation, films trouvés par un acteur) et repli sur celle-ci si l'index n'est pas prêt.
 
 2. **Client React + Vite + Tailwind (`client/`)** :
    * `HomeView` : Hero banner, carrousel *Continuer la lecture* (On Deck), nouveautés films, séries et musique.

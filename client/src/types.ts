@@ -35,6 +35,7 @@ export interface MediaItem {
   videoResolution?: string | null;
   streamUrl?: string;
   trackNumber?: number;
+  score?: number; // pertinence dans une recherche (0 à 1)
 }
 
 export interface StreamTrack {
@@ -99,8 +100,10 @@ export interface HubData {
 }
 
 export interface SearchResults {
+  top: MediaItem | null; // meilleur résultat, tous types confondus
   movies: MediaItem[];
   shows: MediaItem[];
-  tracks: MediaItem[];
   artists: MediaItem[];
+  albums: MediaItem[];
+  tracks: MediaItem[];
 }

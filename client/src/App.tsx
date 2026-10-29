@@ -292,6 +292,7 @@ const Shell: React.FC = () => {
                 onOpenMovie={handleOpenMovie}
                 onOpenShow={handleOpenShow}
                 onOpenAlbum={handleOpenAlbum}
+                onOpenArtist={handleOpenArtist}
               />
             )}
           </div>

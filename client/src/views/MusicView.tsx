@@ -6,7 +6,7 @@ import { useWishlist } from "../context/WishlistContext";
 import { usePlaylist } from "../context/PlaylistContext";
 import { useAudio } from "../context/AudioContext";
 import { MusicTile, Sk, Pills, PlayGlyph } from "../components/ui";
-import { LibraryHeader } from "../components/LibraryHeader";
+import { LibraryHeader, TILE_GRID } from "../components/LibraryHeader";
 import { CollectionArt, CollectionHeader } from "../components/Collection";
 import { PlaylistArt } from "../components/PlaylistArt";
 
@@ -22,8 +22,6 @@ interface MusicViewProps {
   onOpenAlbum: (albumId: string) => void;
   onOpenPlaylist?: (playlistId: string) => void;
 }
-
-const TILE_GRID = "grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-6 gap-1 lg:gap-2 -mx-2.5";
 
 const TileGridSkeleton: React.FC<{ round?: boolean }> = ({ round }) => (
   <div className={TILE_GRID} aria-busy="true" aria-label="Chargement">
