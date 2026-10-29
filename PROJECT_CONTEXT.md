@@ -50,7 +50,7 @@ Créer une application **PWA (Progressive Web App)** connectée à **Plex Media 
 * **Vignettes WebP via Plex Photo Transcoder** :
   * Format WebP activé avec dimensions adaptées à chaque type d'affichage (300x450 pour les affiches, 480x270 pour les épisodes, 300x300 pour la musique, 960x540 pour le hero).
   * **Poids moyen par image : 15 à 25 Ko** (réduction de **96%** du volume réseau).
-  * **Garde-fou anti-plantage** (`server/image-guard.js`) : certaines pochettes font planter le photo transcoder de Plex (segfault, ~1 min 30 d'indisponibilité ; vu le 29/10/2026 avec une pochette JPEG en niveaux de gris ajoutée par spotdl, qui replantait Plex à chaque ouverture de l'onglet Musique). Une image en cours de transcodage quand Plex tombe est mémorisée dans `NOMAD_CACHE_DIR/plex-crash-images.json` et servie brute ensuite. 4 transcodages photo simultanés au plus (`NOMAD_IMAGE_CONCURRENCY`).
+  * **Garde-fou anti-plantage** (`server/image-guard.js`) : le photo transcoder de Plex 1.43 plante (segfault, ~1 min 30 d'indisponibilité) sur les **JPEG en niveaux de gris** (vu le 29/10/2026 sur deux pochettes de musique, dont une ajoutée par spotdl, qui replantaient Plex à chaque ouverture de l'onglet Musique). Avant tout transcodage, la passerelle lit l'en-tête de l'image brute (256 Ko au plus) : un JPEG à 1 composante est servi brut, sans passer par Plex. Filet de sécurité pour les autres causes : une image en cours de transcodage quand Plex tombe est mise de côté. Les deux listes sont dans `NOMAD_CACHE_DIR/plex-crash-images.json`. 4 transcodages photo simultanés au plus (`NOMAD_IMAGE_CONCURRENCY`).
 * **Double Cache Disque & ETag (304 Not Modified)** :
   * Les vignettes WebP générées sont stockées sur le disque NVMe local (`server/.cache/images/`).
   * Temps de réponse sur image en cache : **1,5 ms**.
@@ -156,14 +156,14 @@ Vitesse de l'iGPU pour 4 qualités simultanées : H.264 1080p 4,4× ; HEVC 10 bi
 **Pistes suivantes**
 - [ ] Sous-titres texte (SRT/ASS) en piste WebVTT dans le flux iGPU, sans incrustation, pour ne plus passer par Plex.
 - [ ] Palier 240p (~0,3 Mb/s) pour les réseaux très faibles.
-- [ ] Panneau « statistiques » dans le lecteur et journal des lectures côté serveur (phase 0).
+- [x] Panneau « statistiques » dans le lecteur et journal des lectures côté serveur (phase 0, #5).
 - [x] Désactiver l'ancienne passerelle du laptop.
 
 ### Plan d'action
 
 **Phase 0 : mesurer avant d'agir (≈ 2 h)**
-- [ ] Panneau « statistiques » dans le lecteur : qualité, débit du flux, tampon (s), débit mesuré, nombre de coupures et leur cause (réseau ou transcodeur, déjà calculée pour hls.js).
-- [ ] Journal serveur par lecture (JSON lines) : temps jusqu'à la 1re image, coupures, changements de qualité, vitesse du transcodeur (`/transcode/sessions`).
+- [x] Panneau « statistiques » dans le lecteur (bouton « Statistiques de lecture » en haut à droite) : mode, qualité et résolution, débit du flux et mesuré, tampon, préparation/transfert des segments, avance du transcodeur iGPU ou vitesse Plex, 1re image, coupures et leur cause probable, images perdues.
+- [x] Journal serveur par lecture : une ligne JSON par lecture dans `/var/cache/nomad/logs/playback.jsonl` (rotation à 5 Mo) + un résumé par lecture dans `journalctl -u nomad-stream` (ex. `▶ 1917 · abr 720p · 1re image 2,4 s · 0 coupure · 41 min vues`). Lecture : `ssh pve 'pct exec 105 -- tail -n 20 /var/cache/nomad/logs/playback.jsonl'`.
 - [x] Mesurer le **débit montant de la box** depuis `pve` (speedtest), le débit 4G montant et descendant du téléphone, et vérifier connexion directe ou relais avec `tailscale ping <appareil>`.
 
 **Phase 1 : réglages rapides, sans changer l'architecture (½ journée)**

@@ -12,7 +12,7 @@ import { createTranscoder, SEG } from "./transcoder.js";
 import { createOffline } from "./offline.js";
 import { createAuth } from "./auth.js";
 import { createImageCache } from "./image-cache.js";
-import { createImageGuard, isConnectionDrop } from "./image-guard.js";
+import { createImageGuard, isConnectionDrop, jpegComponents, readHead } from "./image-guard.js";
 import { createPlaybackLog, sanitizePlayback, summarizePlayback } from "./playback-log.js";
 
 dotenv.config();
@@ -151,6 +151,25 @@ const imageGuard = createImageGuard({
       () => false,
     ),
 });
+
+// Image brute en JPEG niveaux de gris ? Seuls ses premiers Ko sont lus (en-tête du fichier ;
+// les métadonnées EXIF peuvent repousser l'en-tête de trame au-delà de 64 Ko)
+async function isGrayscaleJpeg(imagePath) {
+  try {
+    const upstream = await fetchPlex(plexUrl(imagePath), {
+      headers: { Range: "bytes=0-262143" },
+      timeoutMs: PLEX_TIMEOUT_MS,
+      retries: 1,
+    });
+    if (!upstream.ok || !upstream.body) {
+      upstream.body?.cancel().catch(() => {});
+      return false;
+    }
+    return jpegComponents(await readHead(upstream.body, 256 * 1024)) === 1;
+  } catch {
+    return false; // Plex injoignable : le transcodage échouera de lui-même
+  }
+}
 
 // -------------------------------------------------------------
 // IN-MEMORY CACHE ACCELERATOR (TTL)
@@ -901,6 +920,10 @@ app.get("/api/image", async (req, res) => {
     // 2. Transcodage ultra-léger via le photo transcoder de Plex, sauf si l'image l'a déjà fait planter
     let image = null;
     let cacheControl = "public, max-age=2592000, immutable"; // Cache 30 jours
+    // Les JPEG en niveaux de gris font planter le transcodeur : reconnus avant de le solliciter
+    if (!imageGuard.isSuspect(imagePath) && (await isGrayscaleJpeg(imagePath))) {
+      imageGuard.setAside(imagePath, "JPEG en niveaux de gris");
+    }
     if (!imageGuard.isSuspect(imagePath)) {
       const innerUrl = `${imagePath}?X-Plex-Token=${PLEX_TOKEN}`;
       const transcodeUrl = plexUrl("/photo/:/transcode", { width, height, minSize: "1", upscale: "1", format, url: innerUrl });

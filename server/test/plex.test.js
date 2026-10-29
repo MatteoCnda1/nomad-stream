@@ -6,7 +6,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { launch } from "./helpers.js";
-import { startFakePlex } from "./fake-plex.js";
+import { startFakePlex, GRAY_JPEG } from "./fake-plex.js";
 
 let plex;
 let gw;
@@ -193,5 +193,17 @@ describe("images qui font planter Plex", () => {
     plex.behave("/photo/:/transcode", {});
     assert.deepEqual(results.map((r) => r.status), Array(6).fill(200));
     assert.equal(plex.transcodes.peak, 2);
+  });
+
+  test("JPEG en niveaux de gris reconnu d'avance : jamais envoyé au transcodeur", async () => {
+    const gray = "/library/metadata/50/thumb/1700000000";
+    plex.onTranscode(gray, { crash: true }); // comme le vrai Plex
+    const res = await get(image(gray));
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get("content-type"), "image/jpeg");
+    assert.deepEqual(Buffer.from(await res.arrayBuffer()), GRAY_JPEG);
+    const other = await get(image(gray, 301));
+    assert.equal(other.status, 200);
+    assert.equal(transcodes(gray), 0, "Plex n'a jamais eu à la transcoder");
   });
 });
