@@ -165,7 +165,7 @@ export function Pills<T extends string>({
             } ${sel ? "bg-accent text-white" : "bg-card text-fg hover:bg-surface3"}`}
           >
             {o.label}
-            {o.count != null && <span className="text-xs opacity-75">{o.count}</span>}
+            {o.count != null && <span className={`text-xs ${sel ? "" : "opacity-75"}`}>{o.count}</span>}
           </button>
         );
       })}

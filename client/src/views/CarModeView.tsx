@@ -71,6 +71,7 @@ export const CarModeView: React.FC<CarModeViewProps> = ({ onPlayMedia }) => {
 
   return (
     <div className="min-h-[82vh] flex flex-col justify-between select-none pb-20 anim-in pt-[max(18px,env(safe-area-inset-top))] lg:pt-1">
+      <h1 className="sr-only">Mode voiture</h1>
       {/* Mode Car Tabs Header */}
       <div className="grid grid-cols-3 gap-2 bg-card p-1.5 rounded-2xl">
         <button
@@ -142,14 +143,18 @@ export const CarModeView: React.FC<CarModeViewProps> = ({ onPlayMedia }) => {
               {/* Giant Tactile Controls */}
               <div className="w-full max-w-md flex items-center justify-center gap-6 sm:gap-10 pt-2">
                 <button
+                  type="button"
                   onClick={previousTrack}
+                  aria-label="Titre précédent"
                   className="w-16 h-16 sm:w-20 sm:h-20 rounded-3xl bg-card flex items-center justify-center active:bg-surface3 active:scale-90 transition shadow-lg"
                 >
                   <SkipBack className="w-8 h-8 sm:w-10 sm:h-10" />
                 </button>
 
                 <button
+                  type="button"
                   onClick={togglePlay}
+                  aria-label={isPlaying ? "Pause" : "Lecture"}
                   className="w-24 h-24 sm:w-28 sm:h-28 rounded-full bg-accent text-white flex items-center justify-center active:scale-90 transition shadow-[0_18px_36px_-12px_rgba(229,19,29,.7)]"
                 >
                   {isPlaying ? (
@@ -160,7 +165,9 @@ export const CarModeView: React.FC<CarModeViewProps> = ({ onPlayMedia }) => {
                 </button>
 
                 <button
+                  type="button"
                   onClick={nextTrack}
+                  aria-label="Titre suivant"
                   className="w-16 h-16 sm:w-20 sm:h-20 rounded-3xl bg-card flex items-center justify-center active:bg-surface3 active:scale-90 transition shadow-lg"
                 >
                   <SkipForward className="w-8 h-8 sm:w-10 sm:h-10" />

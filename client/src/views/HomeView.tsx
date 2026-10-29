@@ -163,6 +163,8 @@ export const HomeView: React.FC<HomeViewProps> = ({
         </div>
       )}
 
+      {!hero && <h1 className="sr-only">Accueil</h1>}
+
       {/* HERO */}
       {hero && (
         <section

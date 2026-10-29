@@ -73,8 +73,8 @@ export function initials(name: string): string {
   return (parts[0][0] + parts[1][0]).toUpperCase();
 }
 
-// Couleur d'avatar stable dérivée d'un nom
-const AVATAR_COLORS = ["#2f6fe0", "#c47a12", "#1d9a7a", "#8b5cf6", "#d0436b", "#0f8fb3"];
+// Couleur d'avatar stable dérivée d'un nom (initiales blanches lisibles : contraste ≥ 4,7:1)
+const AVATAR_COLORS = ["#2f6fe0", "#a65e0b", "#157a60", "#7c4ddf", "#c2385f", "#0b7593"];
 export function avatarColor(name: string): string {
   let h = 0;
   for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;

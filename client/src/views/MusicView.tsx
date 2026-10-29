@@ -192,6 +192,7 @@ export const MusicView: React.FC<MusicViewProps> = ({
         <div
           role="dialog"
           aria-modal="true"
+          aria-labelledby="new-playlist-title"
           className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 anim-in"
           onClick={() => setIsCreatingPlaylist(false)}
         >
@@ -200,10 +201,11 @@ export const MusicView: React.FC<MusicViewProps> = ({
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between pb-3 border-b border-line">
-              <h3 className="text-lg font-bold">Nouvelle playlist</h3>
+              <h2 id="new-playlist-title" className="text-lg font-bold">Nouvelle playlist</h2>
               <button
                 type="button"
                 onClick={() => setIsCreatingPlaylist(false)}
+                aria-label="Fermer"
                 className="press w-8 h-8 rounded-full grid place-items-center text-muted hover:text-fg"
               >
                 <X className="w-5 h-5" />
@@ -285,7 +287,7 @@ export const MusicView: React.FC<MusicViewProps> = ({
           {playlists.length === 0 ? (
             <div className="py-16 text-center text-muted">
               <ListMusic className="w-14 h-14 mx-auto mb-3 opacity-40" strokeWidth={1.4} />
-              <h3 className="text-lg font-bold text-fg">Aucune playlist pour l'instant</h3>
+              <h2 className="text-lg font-bold text-fg">Aucune playlist pour l'instant</h2>
               <p className="mt-1 text-sm text-muted max-w-sm mx-auto">
                 Créez vos playlists personnalisées et ajoutez-y vos morceaux favoris depuis les
                 albums ou la recherche.
@@ -302,35 +304,40 @@ export const MusicView: React.FC<MusicViewProps> = ({
           ) : (
             <div className={TILE_GRID}>
               {playlists.map((pl) => (
-                <button
-                  key={pl.id}
-                  type="button"
-                  onClick={() => onOpenPlaylist && onOpenPlaylist(pl.id)}
-                  className="tile block w-full text-left p-2.5 rounded-2xl group"
-                >
-                  <div className="relative">
+                // Bouton « Écouter » à côté de celui de la tuile (pas l'un dans l'autre : un
+                // élément cliquable imbriqué est inaccessible au clavier)
+                <div key={pl.id} className="tile relative rounded-2xl group">
+                  <button
+                    type="button"
+                    onClick={() => onOpenPlaylist && onOpenPlaylist(pl.id)}
+                    className="block w-full text-left p-2.5 rounded-2xl"
+                  >
                     <PlaylistArt
                       tracks={pl.tracks}
                       className="w-full aspect-square"
                     />
-                    {pl.tracks.length > 0 && (
-                      <span
+                    <div className="mt-3 text-[15px] font-semibold truncate group-hover:text-accent-text transition-colors">
+                      {pl.title}
+                    </div>
+                    <div className="mt-0.5 text-[13px] leading-snug text-muted line-clamp-2">
+                      {pl.tracks.length} {pl.tracks.length > 1 ? "titres" : "titre"}
+                      {pl.description ? ` · ${pl.description}` : ""}
+                    </div>
+                  </button>
+                  {pl.tracks.length > 0 && (
+                    // Calque de la taille de la pochette : le bouton se pose dans son coin
+                    <div className="pointer-events-none absolute inset-x-2.5 top-2.5 aspect-square">
+                      <button
+                        type="button"
                         onClick={(e) => handlePlayEntirePlaylist(e, pl)}
-                        title="Écouter la playlist"
-                        className="fab absolute right-2.5 bottom-2.5 w-[46px] h-[46px] rounded-full bg-accent grid place-items-center shadow-[0_10px_24px_-6px_rgba(229,19,29,.6)] text-white hover:scale-105 transition-transform"
+                        aria-label={`Écouter la playlist ${pl.title}`}
+                        className="fab fab-action pointer-events-auto absolute right-2.5 bottom-2.5 w-[46px] h-[46px] rounded-full bg-accent grid place-items-center shadow-[0_10px_24px_-6px_rgba(229,19,29,.6)] text-white hover:scale-105 transition-transform"
                       >
                         <PlayGlyph className="w-[18px] h-[18px] text-white ml-0.5" />
-                      </span>
-                    )}
-                  </div>
-                  <div className="mt-3 text-[15px] font-semibold truncate group-hover:text-accent-text transition-colors">
-                    {pl.title}
-                  </div>
-                  <div className="mt-0.5 text-[13px] leading-snug text-muted line-clamp-2">
-                    {pl.tracks.length} {pl.tracks.length > 1 ? "titres" : "titre"}
-                    {pl.description ? ` · ${pl.description}` : ""}
-                  </div>
-                </button>
+                      </button>
+                    </div>
+                  )}
+                </div>
               ))}
             </div>
           )}
