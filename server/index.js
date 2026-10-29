@@ -16,6 +16,8 @@ import { streamRoutes } from "./routes/stream.js";
 import { imageRoutes } from "./routes/images.js";
 import { transcodeRoutes } from "./routes/transcode.js";
 import { playbackRoutes } from "./routes/playback.js";
+import { searchRoutes } from "./routes/search.js";
+import { createLibrarySearch } from "./search.js";
 
 dotenv.config();
 
@@ -77,6 +79,16 @@ if (auth.enabled) console.log("🔒 Code d'accès actif (auth par cookie)");
 // ROUTES API
 // -------------------------------------------------------------
 app.use(catalogRoutes({ plex, cache: createMemoryCache() }));
+// Index de recherche construit peu après le démarrage (la première recherche ne l'attend pas),
+// puis reconstruit en arrière-plan quand il a plus de NOMAD_SEARCH_TTL_MIN minutes
+const librarySearch = createLibrarySearch({
+  plexFetch: plex.plexFetch,
+  ttlMs: (Number(process.env.NOMAD_SEARCH_TTL_MIN) || 15) * 60 * 1000,
+});
+if (process.env.NOMAD_SEARCH_WARMUP !== "0") {
+  setTimeout(() => librarySearch.rebuild().catch((e) => console.error("Index de recherche :", e.message)), 3000).unref();
+}
+app.use(searchRoutes({ plex, librarySearch }));
 app.use(streamRoutes({ plex }));
 app.use(imageRoutes({
   plex,

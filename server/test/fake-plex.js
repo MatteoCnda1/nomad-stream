@@ -13,6 +13,30 @@ const movie = (id, title) => ({
   Media: [{ container: "mp4", videoCodec: "h264", audioCodec: "aac", Part: [{ id: 10 + id, key: `/library/parts/${10 + id}/file.mp4` }] }],
 });
 
+// Bibliothèque musicale : artistes (type 8), albums (9) et titres (10)
+const artist = (id, title) => ({ ratingKey: String(id), key: `/library/metadata/${id}/children`, type: "artist", title });
+const album = (id, title, artistName) => ({ ratingKey: String(id), type: "album", title, parentTitle: artistName });
+const track = (id, title, artistName, albumName, viewCount = 0) => ({
+  ratingKey: String(id),
+  type: "track",
+  title,
+  grandparentTitle: artistName,
+  parentTitle: albumName,
+  viewCount,
+  duration: 240_000,
+  Media: [{ Part: [{ id: 1000 + id, key: `/library/parts/${1000 + id}/file.mp3` }] }],
+});
+export const MUSIC = {
+  8: [artist(100, "Daft Punk"), artist(101, "Beyoncé"), artist(102, "AC/DC")],
+  9: [album(110, "Random Access Memories", "Daft Punk"), album(111, "Highway to Hell", "AC/DC")],
+  10: [
+    track(120, "Get Lucky (feat. Pharrell Williams)", "Daft Punk", "Random Access Memories", 5),
+    track(121, "Instant Crush", "Daft Punk", "Random Access Memories"),
+    track(122, "Highway to Hell", "AC/DC", "Highway to Hell"),
+    track(123, "Crazy In Love (feat. JAY-Z)", "Beyoncé", "Dangerously In Love"),
+  ],
+};
+
 const IMAGE = Buffer.from("FAUSSE-IMAGE");
 // JPEG minimal en niveaux de gris (JFIF + en-tête de trame à 1 composante), comme les pochettes
 // qui font planter le transcodeur photo de Plex : image brute de /library/metadata/50/…
@@ -27,6 +51,17 @@ function respond(url, res) {
   if (p === "/") return json({ friendlyName: "Faux Plex", version: "1.0.0" });
   if (p === "/library/sections/1/all") return json({ totalSize: 2, Metadata: [movie(1, "Alpha"), movie(2, "Bravo")] });
   if (p === "/library/sections/2/all") return json({ totalSize: 0, Metadata: [] });
+  if (p === "/library/sections/5/all") {
+    const items = MUSIC[url.searchParams.get("type")] || MUSIC[8];
+    return json({ totalSize: items.length, Metadata: items });
+  }
+  // Recherche de Plex : un film trouvé par l'un de ses acteurs
+  if (p === "/hubs/search") {
+    const byActor = /brad/i.test(url.searchParams.get("query") || "")
+      ? [{ ...movie(3, "Charlie"), reason: "actor", reasonTitle: "Brad Pitt" }]
+      : [];
+    return json({ Hub: [{ type: "movie", Metadata: byActor }] });
+  }
   if (p === "/transcode/sessions") {
     return json({
       TranscodeSession: [

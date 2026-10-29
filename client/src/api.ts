@@ -114,7 +114,7 @@ export function prefetchMetadata(id: string) {
 
 export async function searchPlex(query: string): Promise<SearchResults> {
   if (!query || query.trim().length === 0) {
-    return { movies: [], shows: [], tracks: [], artists: [] };
+    return { top: null, movies: [], shows: [], artists: [], albums: [], tracks: [] };
   }
   // Cache court de 15s pour les requêtes de recherche
   return cachedFetch(`${BASE_URL}/api/search?q=${encodeURIComponent(query)}`, 15000);

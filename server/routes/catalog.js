@@ -1,7 +1,7 @@
-// Catalogue : statut, accueil, listes (films, séries, artistes), fiches détaillées, recherche
-// et rapport de progression (scrobble).
+// Catalogue : statut, accueil, listes (films, séries, artistes), fiches détaillées et rapport
+// de progression (scrobble). La recherche est dans routes/search.js.
 import express from "express";
-import { SECTIONS, PLEX_WEB_PROFILE, plexClientId, fetchPlex, formatMediaItem, formatTrack, audioStreamUrl } from "../plex.js";
+import { SECTIONS, PLEX_WEB_PROFILE, plexClientId, fetchPlex, formatMediaItem, formatTrack } from "../plex.js";
 import { isNumericId } from "../validate.js";
 
 export function catalogRoutes({ plex, cache }) {
@@ -185,39 +185,6 @@ export function catalogRoutes({ plex, cache }) {
         tracks,
       };
       cache.set(cacheKey, result, 120);
-      res.json(result);
-    } catch (error) {
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  // 9. Recherche globale
-  router.get("/api/search", async (req, res) => {
-    try {
-      const q = req.query.q;
-      if (!q || q.trim().length === 0) {
-        return res.json({ movies: [], shows: [], tracks: [], artists: [] });
-      }
-
-      const data = await plexFetch(`/hubs/search?query=${encodeURIComponent(q)}&limit=15`);
-      const hubs = data.MediaContainer?.Hub || [];
-
-      const result = {
-        movies: [],
-        shows: [],
-        tracks: [],
-        artists: [],
-      };
-
-      for (const h of hubs) {
-        const items = (h.Metadata || []).map(formatMediaItem);
-        if (h.type === "movie") result.movies.push(...items);
-        else if (h.type === "show") result.shows.push(...items);
-        else if (h.type === "track") {
-          result.tracks.push(...items.map((t) => ({ ...t, streamUrl: audioStreamUrl(t.partKey) })));
-        } else if (h.type === "artist") result.artists.push(...items);
-      }
-
       res.json(result);
     } catch (error) {
       res.status(500).json({ error: error.message });

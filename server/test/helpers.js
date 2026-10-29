@@ -26,7 +26,8 @@ export function spawnServer(env = {}) {
   const cwd = mkdtempSync(path.join(tmpdir(), "nomad-test-"));
   const child = spawn(process.execPath, [SERVER], {
     cwd,
-    env: { PATH: process.env.PATH, HOST: "127.0.0.1", PLEX_URL: "http://127.0.0.1:9", ...env },
+    // Index de recherche construit à la demande : pas d'appels à Plex imprévus pendant les tests
+    env: { PATH: process.env.PATH, HOST: "127.0.0.1", PLEX_URL: "http://127.0.0.1:9", NOMAD_SEARCH_WARMUP: "0", ...env },
     stdio: ["ignore", "pipe", "pipe"],
   });
   child.on("exit", () => rmSync(cwd, { recursive: true, force: true }));
