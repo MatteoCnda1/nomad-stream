@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+# Installe une version de Nomad Stream préparée par la CI, avec contrôle de santé et
+# retour automatique à la version précédente si le service ne repart pas.
+# Installé dans /usr/local/bin/nomad-deploy par setup-runner.sh : c'est la seule commande
+# que le runner (utilisateur ghrunner) peut lancer en root (voir /etc/sudoers.d/nomad-deploy).
+# Usage : sudo nomad-deploy <dossier du paquet>   (contient server/ et client/dist/)
+set -euo pipefail
+
+APP=/opt/nomad-stream
+PREV=/var/backups/nomad-stream.previous
+SERVICE=nomad-stream
+PORT=3000
+RUNNER_WORK=/opt/actions-runner/_work
+
+SRC=$(realpath -e "${1:?usage : nomad-deploy <dossier du paquet>}")
+case "$SRC/" in
+  "$RUNNER_WORK"/*) ;;
+  *) echo "✖ Paquet refusé (hors de $RUNNER_WORK) : $SRC" >&2; exit 2 ;;
+esac
+if [[ ! -f $SRC/server/index.js || ! -f $SRC/server/package-lock.json || ! -f $SRC/client/dist/index.html ]]; then
+  echo "✖ Paquet incomplet : $SRC" >&2
+  exit 2
+fi
+
+# Fichiers applicatifs uniquement : dépendances, cache d'images et secrets restent en place
+copy_release() { # <depuis> <vers>
+  mkdir -p "$2/server" "$2/client/dist"
+  rsync -a --no-links --exclude node_modules --exclude .cache --exclude '.env*' --exclude test "$1/server/" "$2/server/"
+  rsync -a --no-links --delete "$1/client/dist/" "$2/client/dist/"
+}
+
+# Dépendances installées en tant que nomad et sans scripts d'installation (jamais de code tiers en root)
+install_and_restart() {
+  chown -R nomad:nomad "$APP"
+  (cd "$APP/server" && runuser -u nomad -- env npm_config_cache=/tmp/nomad-npm-cache \
+    npm ci --omit=dev --ignore-scripts --no-audit --no-fund --loglevel=error)
+  systemctl restart "$SERVICE"
+}
+
+healthy() {
+  for _ in $(seq 1 15); do
+    sleep 2
+    if systemctl is-active --quiet "$SERVICE" && curl -fsS -o /dev/null "http://127.0.0.1:$PORT/"; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+echo "▸ Sauvegarde de la version en place"
+rm -rf "$PREV"
+copy_release "$APP" "$PREV"
+
+echo "▸ Installation de la nouvelle version"
+copy_release "$SRC" "$APP"
+install_and_restart
+
+if healthy; then
+  echo "✔ Déployé, service en bonne santé"
+  # Pour information (n'annule pas le déploiement) : la nouvelle version joint-elle Plex ?
+  code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/api/status" || true)
+  echo "  /api/status → HTTP $code (200 = Plex OK ; 401 = code d'accès actif ; 502 = Plex injoignable)"
+  exit 0
+fi
+
+echo "✖ Le service ne répond pas : retour à la version précédente" >&2
+journalctl -u "$SERVICE" -n 30 --no-pager >&2 || true
+copy_release "$PREV" "$APP"
+install_and_restart
+if healthy; then
+  echo "↩ Version précédente rétablie" >&2
+else
+  echo "‼ La version précédente ne répond pas non plus : intervention manuelle nécessaire" >&2
+fi
+exit 1

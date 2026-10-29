@@ -1,9 +1,14 @@
-# Vérifications automatiques : sur chaque PR, et sur main après merge.
-# Les deux jobs doivent être verts pour merger (protection de branche).
+# Vérification, fusion et déploiement automatiques.
+# - Toute PR (hors brouillon) est fusionnée dès que le client et le serveur sont verts.
+#   Pour retenir une PR (à tester d'abord), la laisser en brouillon.
+# - Une fois fusionnée (ou après un push / lancement manuel sur main), la version testée est
+#   déployée sur le LXC nomad par le runner auto-hébergé, si la variable DEPLOY_ENABLED vaut true
+#   (posée par scripts/install-runner.sh).
 name: CI
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches: [main]
   workflow_dispatch:
@@ -11,10 +16,11 @@ on:
 permissions:
   contents: read
 
-# Un nouveau push sur la même branche annule la vérification devenue obsolète
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # Un nouveau push sur une PR annule la vérification obsolète ; sur main, on n'interrompt
+  # jamais un déploiement en cours
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   client:
@@ -34,11 +40,29 @@ jobs:
       - run: npm ci
       # "build" = tsc (typecheck strict) puis vite build
       - run: npm run build
+      # Paquet déployable : exactement la version testée (client compilé + serveur sans les tests)
+      - name: Paquet de déploiement
+        working-directory: .
+        run: |
+          mkdir -p bundle/client
+          cp -r client/dist bundle/client/
+          git archive HEAD server | tar -x -C bundle
+          rm -rf bundle/server/test
+      - uses: actions/upload-artifact@v7
+        with:
+          name: nomad-bundle
+          path: bundle/
+          retention-days: 3
 
   server:
-    name: Serveur (syntaxe + tests)
+    name: Serveur (Node ${{ matrix.node }})
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        # 20 : version installée sur le LXC (paquet Debian) ; 24 : version cible
+        node: [20, 24]
     defaults:
       run:
         working-directory: server
@@ -46,10 +70,53 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
-          node-version-file: .nvmrc
+          node-version: ${{ matrix.node }}
           cache: npm
           cache-dependency-path: server/package-lock.json
       - run: npm ci
       - name: Vérification de syntaxe
         run: for f in *.js; do node --check "$f"; done
       - run: npm test
+
+  automerge:
+    name: Fusion automatique
+    needs: [client, server]
+    if: >-
+      github.event_name == 'pull_request' && !github.event.pull_request.draft
+      && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      # --match-head-commit : ne fusionne que le commit qui vient d'être vérifié
+      - name: Fusion de la PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: gh pr merge "$PR_URL" --merge --delete-branch --match-head-commit "$HEAD_SHA"
+
+  # Une fusion faite avec le jeton de la CI ne déclenche pas de nouveau workflow sur main :
+  # le déploiement suit donc la fusion dans ce même run.
+  deploy:
+    name: Déploiement (LXC nomad)
+    needs: [client, server, automerge]
+    if: >-
+      ${{ !cancelled() && vars.DEPLOY_ENABLED == 'true'
+      && needs.client.result == 'success' && needs.server.result == 'success'
+      && (needs.automerge.result == 'success'
+          || (github.event_name != 'pull_request' && github.ref == 'refs/heads/main')) }}
+    runs-on: [self-hosted, nomad]
+    timeout-minutes: 15
+    concurrency:
+      group: deploy-nomad
+      cancel-in-progress: false
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: nomad-bundle
+          path: ${{ runner.temp }}/nomad-bundle
+      - name: Installation, redémarrage et contrôle de santé
+        run: sudo /usr/local/bin/nomad-deploy "$RUNNER_TEMP/nomad-bundle"
