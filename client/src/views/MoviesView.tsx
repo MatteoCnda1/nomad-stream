@@ -1,9 +1,9 @@
-import React, { useEffect, useState } from "react";
-import { MediaItem } from "../types";
+import React from "react";
 import { fetchMovies } from "../api";
+import { usePagedList } from "../hooks/usePagedList";
 import { Star } from "lucide-react";
 import { PosterCard } from "../components/ui";
-import { LibraryHeader, POSTER_GRID, PosterGridSkeleton } from "../components/LibraryHeader";
+import { LibraryHeader, LoadMore, POSTER_GRID, PosterGridSkeleton } from "../components/LibraryHeader";
 
 interface MoviesViewProps {
   onOpenMovie: (movieId: string) => void;
@@ -12,23 +12,8 @@ interface MoviesViewProps {
 }
 
 export const MoviesView: React.FC<MoviesViewProps> = ({ onOpenMovie, sort, onSortChange }) => {
-  const [movies, setMovies] = useState<MediaItem[]>([]);
-  const [totalSize, setTotalSize] = useState(0);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    setLoading(true);
-    fetchMovies(0, 100, sort)
-      .then((res) => {
-        setMovies(res.items);
-        setTotalSize(res.totalSize);
-        setLoading(false);
-      })
-      .catch((err) => {
-        console.error(err);
-        setLoading(false);
-      });
-  }, [sort]);
+  const list = usePagedList(`movies:${sort}`, (offset, limit) => fetchMovies(offset, limit, sort));
+  const { items: movies, totalSize, loading } = list;
 
   return (
     <div>
@@ -63,6 +48,7 @@ export const MoviesView: React.FC<MoviesViewProps> = ({ onOpenMovie, sort, onSor
           ))}
         </div>
       )}
+      <LoadMore {...list} onLoadMore={list.loadMore} shown={movies.length} total={totalSize} />
     </div>
   );
 };
