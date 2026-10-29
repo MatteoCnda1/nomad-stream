@@ -156,14 +156,14 @@ Vitesse de l'iGPU pour 4 qualités simultanées : H.264 1080p 4,4× ; HEVC 10 bi
 **Pistes suivantes**
 - [ ] Sous-titres texte (SRT/ASS) en piste WebVTT dans le flux iGPU, sans incrustation, pour ne plus passer par Plex.
 - [ ] Palier 240p (~0,3 Mb/s) pour les réseaux très faibles.
-- [ ] Panneau « statistiques » dans le lecteur et journal des lectures côté serveur (phase 0).
+- [x] Panneau « statistiques » dans le lecteur et journal des lectures côté serveur (phase 0, #5).
 - [x] Désactiver l'ancienne passerelle du laptop.
 
 ### Plan d'action
 
 **Phase 0 : mesurer avant d'agir (≈ 2 h)**
-- [ ] Panneau « statistiques » dans le lecteur : qualité, débit du flux, tampon (s), débit mesuré, nombre de coupures et leur cause (réseau ou transcodeur, déjà calculée pour hls.js).
-- [ ] Journal serveur par lecture (JSON lines) : temps jusqu'à la 1re image, coupures, changements de qualité, vitesse du transcodeur (`/transcode/sessions`).
+- [x] Panneau « statistiques » dans le lecteur (bouton « Statistiques de lecture » en haut à droite) : mode, qualité et résolution, débit du flux et mesuré, tampon, préparation/transfert des segments, avance du transcodeur iGPU ou vitesse Plex, 1re image, coupures et leur cause probable, images perdues.
+- [x] Journal serveur par lecture : une ligne JSON par lecture dans `/var/cache/nomad/logs/playback.jsonl` (rotation à 5 Mo) + un résumé par lecture dans `journalctl -u nomad-stream` (ex. `▶ 1917 · abr 720p · 1re image 2,4 s · 0 coupure · 41 min vues`). Lecture : `ssh pve 'pct exec 105 -- tail -n 20 /var/cache/nomad/logs/playback.jsonl'`.
 - [x] Mesurer le **débit montant de la box** depuis `pve` (speedtest), le débit 4G montant et descendant du téléphone, et vérifier connexion directe ou relais avec `tailscale ping <appareil>`.
 
 **Phase 1 : réglages rapides, sans changer l'architecture (½ journée)**

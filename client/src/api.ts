@@ -155,6 +155,30 @@ export function beaconTimeline(params: TimelineParams) {
   forgetProgress(params.ratingKey);
 }
 
+// Bilan d'une lecture pour le journal du serveur (envoyé à la fermeture du lecteur)
+export type PlaybackSummary = {
+  id: string;
+  title: string;
+  mode: "direct" | "hls" | "abr" | "local" | null;
+  quality: string | null;
+  ttffMs: number | null;
+  watchedS: number;
+  stalls: number;
+  stallMs: number;
+  qualitySwitches: number;
+  restarts: number;
+  cause: "network" | "transcoder" | null;
+  bandwidthKbps: number | null;
+  droppedFrames: number;
+  totalFrames: number;
+  error: string | null;
+};
+
+export function beaconPlaybackLog(summary: PlaybackSummary) {
+  const body = new Blob([JSON.stringify({ ...summary, client: getDeviceId() })], { type: "application/json" });
+  navigator.sendBeacon?.(`${BASE_URL}/api/playback/log`, body);
+}
+
 // --- Authentification (code d'accès partagé) ---
 
 export async function checkAuth(): Promise<{ enabled: boolean; authed: boolean }> {

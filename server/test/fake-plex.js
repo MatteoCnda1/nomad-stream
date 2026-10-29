@@ -27,6 +27,14 @@ function respond(url, res) {
   if (p === "/") return json({ friendlyName: "Faux Plex", version: "1.0.0" });
   if (p === "/library/sections/1/all") return json({ totalSize: 2, Metadata: [movie(1, "Alpha"), movie(2, "Bravo")] });
   if (p === "/library/sections/2/all") return json({ totalSize: 0, Metadata: [] });
+  if (p === "/transcode/sessions") {
+    return json({
+      TranscodeSession: [
+        { key: "/transcode/sessions/nomad-autre", speed: 9.9, throttled: true },
+        { key: "/transcode/sessions/nomad-test123", speed: 2.4, throttled: false, videoDecision: "transcode" },
+      ],
+    });
+  }
   if (/^\/library\/metadata\/\d+$/.test(p)) return json({ Metadata: [movie(Number(p.split("/")[3]), "Alpha")] });
   if (p === "/photo/:/transcode") {
     res.writeHead(200, { "Content-Type": `image/${url.searchParams.get("format") || "jpeg"}` });
