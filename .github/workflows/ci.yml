@@ -76,6 +76,7 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
+      issues: write
     outputs:
       merge_sha: ${{ steps.merge.outputs.sha }}
     steps:
@@ -89,6 +90,19 @@ jobs:
         run: |
           gh pr merge "$PR_URL" --merge --delete-branch --match-head-commit "$HEAD_SHA"
           echo "sha=$(gh pr view "$PR_URL" --json mergeCommit --jq .mergeCommit.oid)" >> "$GITHUB_OUTPUT"
+      # GitHub ignore les « Closes #N » d'une PR fusionnée avec le jeton de la CI : on ferme nous-mêmes
+      - name: Fermeture des issues liées
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          # shellcheck disable=SC2016 # $o, $r, $n sont des variables GraphQL, pas du shell
+          issues=$(gh api graphql -F n="$PR_NUMBER" -f o="${GITHUB_REPOSITORY%/*}" -f r="${GITHUB_REPOSITORY#*/}" \
+            -f query='query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){closingIssuesReferences(first:20){nodes{number}}}}}' \
+            --jq '.data.repository.pullRequest.closingIssuesReferences.nodes[].number')
+          for n in $issues; do
+            gh issue close "$n" -R "$GITHUB_REPOSITORY" -c "Résolu par #$PR_NUMBER (fusion automatique)."
+          done
 
   # Une fusion faite avec le jeton de la CI ne déclenche pas de nouveau workflow sur main :
   # le déploiement suit donc la fusion dans ce même run. Pas d'artefact (le quota de stockage
