@@ -128,6 +128,12 @@ export async function fetchRadio(seedId: string, excludeIds: string[], limit = 2
   return (await res.json()).items;
 }
 
+// Barre de recherche de l'onglet Musique : artistes seulement (recherche approximative)
+export async function searchArtists(query: string): Promise<MediaItem[]> {
+  const res = await cachedFetch<SearchResults>(`${BASE_URL}/api/search?q=${encodeURIComponent(query)}&types=artist`, 15000);
+  return res.artists;
+}
+
 type TimelineParams = {
   ratingKey: string;
   key?: string;

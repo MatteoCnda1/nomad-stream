@@ -82,7 +82,7 @@ Créer une application **PWA (Progressive Web App)** connectée à **Plex Media 
 2. **Client React + Vite + Tailwind (`client/`)** :
    * `HomeView` : Hero banner, carrousel *Continuer la lecture* (On Deck), nouveautés films, séries et musique.
    * `MoviesView` & `ShowsView` & `ShowDetailView` : Navigation dans les catalogues, sélection des saisons/épisodes.
-   * `MusicView` & `AlbumDetailView` : Gestion des artistes et pistes audio.
+   * `MusicView` & `AlbumDetailView` : Gestion des artistes et pistes audio. Onglet Musique › Artistes : liste complète au défilement et barre de recherche réservée aux artistes (`/api/search?types=artist`, approximative). Titres : balayage au doigt vers la droite = ajouter à une playlist, vers la gauche = lire ensuite (`components/SwipeRow.tsx` ; menu « ⋮ » pour souris et clavier).
    * `CarModeView` : Interface épurée avec touches surdimensionnées pour l'écoute en conduite.
    * `VideoPlayer` : Lecteur vidéo avec gestion automatique Direct Play vs HLS, sélection dynamique des flux audio et sous-titres, double-tap +/-10s, synchronisation Plex.
    * `AudioPlayer` : Mini lecteur flottant et modal plein écran avec synchronisation `navigator.mediaSession` (CarPlay / commandes au volant).

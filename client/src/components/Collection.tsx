@@ -4,6 +4,7 @@ import { MediaItem } from "../types";
 import { formatTrackDuration } from "../utils/format";
 import { usePlaylist } from "../context/PlaylistContext";
 import { useAudio } from "../context/AudioContext";
+import { SwipeRow } from "./SwipeRow";
 
 // Bandeau d'en-tête teinté (Ma liste, album, artiste)
 export const CollectionHeader: React.FC<{
@@ -111,87 +112,95 @@ export const TrackRow: React.FC<{
   }, [menuOpen]);
 
   return (
-    <div className={`${TRACK_ROW} px-3 py-2 rounded-xl transition-colors hover:bg-card relative`}>
-      <span className={`text-sm tabular-nums ${isCurrent ? "text-accent-text font-semibold" : "text-muted"}`}>
-        {track.trackNumber || index + 1}
-      </span>
-      <button type="button" onClick={onPlay} className="min-w-0 text-left py-1">
-        <span className={`block text-[15px] font-semibold truncate ${isCurrent ? "text-accent-text" : ""}`}>
-          {track.title}
+    <SwipeRow
+      onSwipeRight={() => openPlaylistModal(track)}
+      onSwipeLeft={() => {
+        playNext(track);
+        showToast("Sera lu ensuite");
+      }}
+    >
+      <div className={`${TRACK_ROW} px-3 py-2 rounded-xl transition-colors hover:bg-card relative`}>
+        <span className={`text-sm tabular-nums ${isCurrent ? "text-accent-text font-semibold" : "text-muted"}`}>
+          {track.trackNumber || index + 1}
         </span>
-        {subtitle && <span className="block text-[13px] text-muted truncate">{subtitle}</span>}
-      </button>
-      <span className="text-sm text-muted text-right tabular-nums">{formatTrackDuration(track.duration)}</span>
-      
-      <div className="flex items-center justify-end gap-0.5">
-        <button
-          type="button"
-          onClick={onToggleSaved}
-          aria-pressed={saved}
-          aria-label={saved ? `Retirer ${track.title} de ma liste` : `Ajouter ${track.title} à ma liste`}
-          className={`press w-9 h-9 rounded-full grid place-items-center hover:bg-surface3 ${saved ? "text-accent" : "text-muted"}`}
-        >
-          <Heart className={`w-[18px] h-[18px] ${saved ? "fill-current" : ""}`} strokeWidth={1.9} />
+        <button type="button" onClick={onPlay} className="min-w-0 text-left py-1">
+          <span className={`block text-[15px] font-semibold truncate ${isCurrent ? "text-accent-text" : ""}`}>
+            {track.title}
+          </span>
+          {subtitle && <span className="block text-[13px] text-muted truncate">{subtitle}</span>}
         </button>
-
-        <div className="relative">
+        <span className="text-sm text-muted text-right tabular-nums">{formatTrackDuration(track.duration)}</span>
+      
+        <div className="flex items-center justify-end gap-0.5">
           <button
             type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              setMenuOpen((prev) => !prev);
-            }}
-            aria-label="Options du morceau"
-            className="press w-9 h-9 rounded-full grid place-items-center text-muted hover:text-fg hover:bg-surface3"
+            onClick={onToggleSaved}
+            aria-pressed={saved}
+            aria-label={saved ? `Retirer ${track.title} de ma liste` : `Ajouter ${track.title} à ma liste`}
+            className={`press w-9 h-9 rounded-full grid place-items-center hover:bg-surface3 ${saved ? "text-accent" : "text-muted"}`}
           >
-            <MoreVertical className="w-4 h-4" />
+            <Heart className={`w-[18px] h-[18px] ${saved ? "fill-current" : ""}`} strokeWidth={1.9} />
           </button>
 
-          {menuOpen && (
-            <div
-              ref={menuRef}
-              className="absolute right-0 top-full mt-1.5 z-40 w-52 rounded-2xl bg-surface border border-line shadow-2xl p-1.5 flex flex-col gap-0.5 text-xs font-semibold anim-in"
-              onClick={(e) => e.stopPropagation()}
+          <div className="relative">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setMenuOpen((prev) => !prev);
+              }}
+              aria-label="Options du morceau"
+              className="press w-9 h-9 rounded-full grid place-items-center text-muted hover:text-fg hover:bg-surface3"
             >
-              <button
-                type="button"
-                onClick={() => {
-                  setMenuOpen(false);
-                  playNext(track);
-                  showToast("Sera lu ensuite");
-                }}
-                className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl hover:bg-card text-fg text-left transition-colors"
+              <MoreVertical className="w-4 h-4" />
+            </button>
+
+            {menuOpen && (
+              <div
+                ref={menuRef}
+                className="absolute right-0 top-full mt-1.5 z-40 w-52 rounded-2xl bg-surface border border-line shadow-2xl p-1.5 flex flex-col gap-0.5 text-xs font-semibold anim-in"
+                onClick={(e) => e.stopPropagation()}
               >
-                <ListPlus className="w-4 h-4 text-muted" />
-                <span>Écouter ensuite</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setMenuOpen(false);
-                  addToQueue(track);
-                  showToast("Ajouté à la file d'attente");
-                }}
-                className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl hover:bg-card text-fg text-left transition-colors"
-              >
-                <ListMusic className="w-4 h-4 text-muted" />
-                <span>Ajouter à la file</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setMenuOpen(false);
-                  openPlaylistModal(track);
-                }}
-                className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl hover:bg-card text-fg text-left transition-colors"
-              >
-                <Plus className="w-4 h-4 text-muted" />
-                <span>Ajouter à une playlist…</span>
-              </button>
-            </div>
-          )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    playNext(track);
+                    showToast("Sera lu ensuite");
+                  }}
+                  className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl hover:bg-card text-fg text-left transition-colors"
+                >
+                  <ListPlus className="w-4 h-4 text-muted" />
+                  <span>Écouter ensuite</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    addToQueue(track);
+                    showToast("Ajouté à la file d'attente");
+                  }}
+                  className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl hover:bg-card text-fg text-left transition-colors"
+                >
+                  <ListMusic className="w-4 h-4 text-muted" />
+                  <span>Ajouter à la file</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    openPlaylistModal(track);
+                  }}
+                  className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl hover:bg-card text-fg text-left transition-colors"
+                >
+                  <Plus className="w-4 h-4 text-muted" />
+                  <span>Ajouter à une playlist…</span>
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </div>
-    </div>
+    </SwipeRow>
   );
 };

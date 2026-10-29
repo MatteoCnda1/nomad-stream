@@ -110,6 +110,15 @@ describe("route /api/search", () => {
     assert.deepEqual(titles((await get("bravo")).movies), ["Bravo"]);
   });
 
+  test("limitée aux artistes (barre de recherche de l'onglet Musique)", async () => {
+    const r = await (await fetch(`${gw.base}/api/search?q=${encodeURIComponent("daft pank")}&types=artist`)).json();
+    assert.deepEqual(titles(r.artists), ["Daft Punk"]);
+    assert.equal(r.top.type, "artist");
+    assert.deepEqual([r.albums, r.tracks, r.movies, r.shows].flat(), []);
+    const none = await (await fetch(`${gw.base}/api/search?q=bravo&types=artist`)).json();
+    assert.equal(none.top, null, "le film Bravo n'est pas un artiste");
+  });
+
   test("films trouvés par Plex grâce à un acteur", async () => {
     const r = await get("brad pitt");
     assert.deepEqual(titles(r.movies), ["Charlie"]);

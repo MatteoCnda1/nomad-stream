@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { ArtistDetail, MediaItem } from "../types";
-import { fetchMusicArtists, fetchArtistDetail } from "../api";
-import { Heart, Plus, ListMusic, X } from "lucide-react";
+import { fetchMusicArtists, fetchArtistDetail, searchArtists } from "../api";
+import { Heart, Plus, ListMusic, X, Search } from "lucide-react";
 import { useWishlist } from "../context/WishlistContext";
 import { usePlaylist } from "../context/PlaylistContext";
 import { useAudio } from "../context/AudioContext";
@@ -23,6 +23,9 @@ interface MusicViewProps {
   onOpenAlbum: (albumId: string) => void;
   onOpenPlaylist?: (playlistId: string) => void;
 }
+
+// Recherche d'artiste en cours, gardée en quittant l'onglet (fiche artiste, album, retour)
+let lastArtistQuery = "";
 
 const TileGridSkeleton: React.FC<{ round?: boolean }> = ({ round }) => (
   <div className={TILE_GRID} aria-busy="true" aria-label="Chargement">
@@ -48,6 +51,37 @@ export const MusicView: React.FC<MusicViewProps> = ({
   const activeTab = showPlaylists ? "playlists" : "artists";
   const artistList = usePagedList("artists", fetchMusicArtists);
   const { items: artists, totalSize, loading } = artistList;
+
+  // Barre de recherche réservée aux artistes : recherche approximative côté serveur (toute la
+  // bibliothèque, pas seulement les artistes déjà affichés)
+  const [artistQuery, setArtistQueryState] = useState(lastArtistQuery);
+  const [foundArtists, setFoundArtists] = useState<MediaItem[] | null>(null);
+  const [searchingArtists, setSearchingArtists] = useState(false);
+  const setArtistQuery = (q: string) => {
+    lastArtistQuery = q;
+    setArtistQueryState(q);
+  };
+  const filtering = artistQuery.trim().length > 0;
+
+  useEffect(() => {
+    const q = artistQuery.trim();
+    if (!q) {
+      setFoundArtists(null);
+      return;
+    }
+    let active = true;
+    setSearchingArtists(true);
+    const timer = window.setTimeout(() => {
+      searchArtists(q)
+        .then((list) => active && setFoundArtists(list))
+        .catch((e) => console.error(e))
+        .finally(() => active && setSearchingArtists(false));
+    }, 200);
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [artistQuery]);
   const { isSaved, toggle } = useWishlist();
   const { playlists, createPlaylist } = usePlaylist();
   const { playTrack } = useAudio();
@@ -156,9 +190,11 @@ export const MusicView: React.FC<MusicViewProps> = ({
         title="Musique"
         subtitle={
           activeTab === "artists"
-            ? loading
-              ? "Chargement…"
-              : `${totalSize} artistes dans votre collection`
+            ? filtering && foundArtists
+              ? `${foundArtists.length} ${foundArtists.length > 1 ? "artistes trouvés" : "artiste trouvé"} sur ${totalSize}`
+              : loading
+                ? "Chargement…"
+                : `${totalSize} artistes dans votre collection`
             : `${playlists.length} ${playlists.length > 1 ? "playlists créées" : "playlist créée"}`
         }
       />
@@ -261,23 +297,73 @@ export const MusicView: React.FC<MusicViewProps> = ({
       {/* Contenu onglet ARTISTES */}
       {activeTab === "artists" && (
         <>
-          {loading ? (
-            <TileGridSkeleton round />
+          <div role="search" className="relative mb-6 max-w-md">
+            <label className="sr-only" htmlFor="artist-search">Rechercher un artiste</label>
+            <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-[18px] h-[18px] text-muted pointer-events-none" strokeWidth={2} />
+            <input
+              id="artist-search"
+              type="search"
+              value={artistQuery}
+              onChange={(e) => setArtistQuery(e.target.value)}
+              placeholder="Rechercher un artiste…"
+              autoComplete="off"
+              enterKeyHint="search"
+              className="w-full h-12 pl-11 pr-11 rounded-full border border-line bg-surface text-[15px] placeholder:text-faint outline-none focus:border-line2"
+            />
+            {artistQuery && (
+              <button
+                type="button"
+                onClick={() => setArtistQuery("")}
+                aria-label="Effacer la recherche d'artiste"
+                className="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 grid place-items-center text-muted hover:text-fg"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            )}
+          </div>
+
+          {filtering ? (
+            !foundArtists ? (
+              <TileGridSkeleton round />
+            ) : foundArtists.length === 0 ? (
+              <div role="status" className="py-16 text-center text-muted">
+                Aucun artiste pour « {artistQuery.trim()} »
+              </div>
+            ) : (
+              <div className={`${TILE_GRID} anim-in transition-opacity ${searchingArtists ? "opacity-60" : ""}`}>
+                {foundArtists.map((artist) => (
+                  <MusicTile
+                    key={artist.id}
+                    img={artist.thumb}
+                    title={artist.title}
+                    sub="Artiste"
+                    round
+                    onClick={() => onOpenArtist(artist)}
+                  />
+                ))}
+              </div>
+            )
           ) : (
-            <div className={`${TILE_GRID} anim-in`}>
-              {artists.map((artist) => (
-                <MusicTile
-                  key={artist.id}
-                  img={artist.thumb}
-                  title={artist.title}
-                  sub="Artiste"
-                  round
-                  onClick={() => onOpenArtist(artist)}
-                />
-              ))}
-            </div>
+            <>
+              {loading ? (
+                <TileGridSkeleton round />
+              ) : (
+                <div className={`${TILE_GRID} anim-in`}>
+                  {artists.map((artist) => (
+                    <MusicTile
+                      key={artist.id}
+                      img={artist.thumb}
+                      title={artist.title}
+                      sub="Artiste"
+                      round
+                      onClick={() => onOpenArtist(artist)}
+                    />
+                  ))}
+                </div>
+              )}
+              <LoadMore {...artistList} onLoadMore={artistList.loadMore} shown={artists.length} total={totalSize} />
+            </>
           )}
-          <LoadMore {...artistList} onLoadMore={artistList.loadMore} shown={artists.length} total={totalSize} />
         </>
       )}
 
