@@ -7,13 +7,14 @@ import { LibraryHeader, POSTER_GRID, PosterGridSkeleton } from "../components/Li
 
 interface MoviesViewProps {
   onOpenMovie: (movieId: string) => void;
+  sort: string; // dans l'adresse (?tri=) : conservé au retour d'une fiche
+  onSortChange: (sort: string) => void;
 }
 
-export const MoviesView: React.FC<MoviesViewProps> = ({ onOpenMovie }) => {
+export const MoviesView: React.FC<MoviesViewProps> = ({ onOpenMovie, sort, onSortChange }) => {
   const [movies, setMovies] = useState<MediaItem[]>([]);
   const [totalSize, setTotalSize] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [sort, setSort] = useState("titleSort:asc");
 
   useEffect(() => {
     setLoading(true);
@@ -35,7 +36,7 @@ export const MoviesView: React.FC<MoviesViewProps> = ({ onOpenMovie }) => {
         title="Films"
         subtitle={loading ? "Chargement…" : `${totalSize} films disponibles`}
         sort={sort}
-        onSortChange={setSort}
+        onSortChange={onSortChange}
       />
 
       {loading ? (

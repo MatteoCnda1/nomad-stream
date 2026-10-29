@@ -18,7 +18,7 @@ import { AlbumDetailView } from "./views/AlbumDetailView";
 import { PlaylistDetailView } from "./views/PlaylistDetailView";
 import { PlaylistModal } from "./components/PlaylistModal";
 import { GlobalToast } from "./components/GlobalToast";
-import { PlaylistProvider } from "./context/PlaylistContext";
+import { PlaylistProvider, usePlaylist } from "./context/PlaylistContext";
 import { SearchView } from "./views/SearchView";
 import { CarModeView } from "./views/CarModeView";
 import { WishlistView } from "./views/WishlistView";
@@ -29,29 +29,37 @@ import { fetchMetadata } from "./api";
 import { offlineUrl } from "./offline";
 import { WifiOff } from "lucide-react";
 import { AuthGate } from "./components/AuthGate";
+import { Tab, useHistoryOverlay, useRouter } from "./router";
+
+const DEFAULT_SORT = "titleSort:asc";
+
+const TITLES: Record<Tab, string> = {
+  home: "Accueil",
+  movies: "Films",
+  shows: "Séries",
+  music: "Musique",
+  wishlist: "Ma liste",
+  account: "Compte",
+  downloads: "Téléchargements",
+  car: "Mode voiture",
+  search: "Recherche",
+};
 
 const Shell: React.FC = () => {
-  // Lancée sans réseau, l'appli s'ouvre directement sur les téléchargements
-  const [tab, setTab] = useState<string>(() => (navigator.onLine ? "home" : "downloads"));
+  // L'écran affiché vient de l'adresse (voir router.ts)
+  const { route, navigate, back } = useRouter();
+  const tab = route.tab;
   const [online, setOnline] = useState(navigator.onLine);
   const [homeFilter, setHomeFilter] = useState<HomeFilter>("all");
-  const [searchQuery, setSearchQuery] = useState("");
-  const [activeMovieId, setActiveMovieId] = useState<string | null>(null);
-  const [activeShowId, setActiveShowId] = useState<string | null>(null);
-  const [activeAlbumId, setActiveAlbumId] = useState<string | null>(null);
-  const [activeArtist, setActiveArtist] = useState<MediaItem | null>(null);
-  const [activePlaylistId, setActivePlaylistId] = useState<string | null>(null);
   const [activeVideoMedia, setActiveVideoMedia] = useState<MediaDetail | null>(null);
   const [activeLocalSrc, setActiveLocalSrc] = useState<string | null>(null);
   const [launchingItem, setLaunchingItem] = useState<MediaItem | null>(null);
   const [launchError, setLaunchError] = useState<string | null>(null);
   const launchIdRef = useRef(0);
-  // Navigation / bouton retour : profondeur d'historique déjà poussée, pops à ignorer,
-  // et fermeture de la couche supérieure (recalculée à chaque rendu via une ref).
-  const pushedDepthRef = useRef(0);
-  const suppressPopRef = useRef(0);
-  const closeTopRef = useRef<() => boolean>(() => false);
-  const { currentTrack, playTrack } = useAudio();
+  // Artiste cliqué : son nom s'affiche avant la réponse du serveur
+  const artistHintRef = useRef<MediaItem | null>(null);
+  const { currentTrack, playTrack, isExpanded, setIsExpanded, isQueueOpen, setIsQueueOpen } = useAudio();
+  const { modalTracks, closePlaylistModal } = usePlaylist();
   const downloads = useDownloads();
 
   useEffect(() => {
@@ -65,45 +73,28 @@ const Shell: React.FC = () => {
     };
   }, []);
 
-  // Remonter en haut de page à chaque changement de vue
+  // Lancée sans réseau sur l'accueil, l'appli s'ouvre directement sur les téléchargements
   useEffect(() => {
-    window.scrollTo({ top: 0 });
-  }, [tab, activeMovieId, activeShowId, activeAlbumId, activeArtist, activePlaylistId]);
-
-  // Synchronise la pile d'historique du navigateur avec la profondeur de navigation,
-  // pour que le bouton/geste "retour" ferme la couche du dessus (lecteur, fiche, onglet)
-  // plutôt que de quitter la PWA. Les fermetures via l'UI (onBack/onClose) réduisent la
-  // profondeur : l'effet retire alors l'entrée d'historique correspondante.
-  useEffect(() => {
-    const hasPlayer = !!(launchingItem || activeVideoMedia);
-    const detailOpen = !!(activeMovieId || activeShowId || activeAlbumId || activeArtist || activePlaylistId);
-    const depth = (tab !== "home" ? 1 : 0) + (detailOpen ? 1 : 0) + (hasPlayer ? 1 : 0);
-    const pushed = pushedDepthRef.current;
-    if (depth > pushed) {
-      for (let i = 0; i < depth - pushed; i++) window.history.pushState(null, "");
-      pushedDepthRef.current = depth;
-    } else if (depth < pushed) {
-      const diff = pushed - depth;
-      suppressPopRef.current += diff;
-      pushedDepthRef.current = depth;
-      window.history.go(-diff);
-    }
-  }, [tab, activeMovieId, activeShowId, activeAlbumId, activeArtist, activePlaylistId, launchingItem, activeVideoMedia]);
-
-  // Écouteur unique : un "retour" réel ferme la couche du dessus ; les pops provoqués
-  // par la synchro ci-dessus (fermeture UI) sont ignorés.
-  useEffect(() => {
-    const onPop = () => {
-      if (suppressPopRef.current > 0) {
-        suppressPopRef.current--;
-        return;
-      }
-      const closed = closeTopRef.current();
-      if (closed) pushedDepthRef.current = Math.max(0, pushedDepthRef.current - 1);
-    };
-    window.addEventListener("popstate", onPop);
-    return () => window.removeEventListener("popstate", onPop);
+    if (!navigator.onLine && route.tab === "home") navigate({ tab: "downloads" }, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    document.title = tab === "home" ? "Nomad Stream" : `${TITLES[tab]} · Nomad Stream`;
+  }, [tab]);
+
+  const closePlayer = () => {
+    launchIdRef.current++;
+    setLaunchingItem(null);
+    setLaunchError(null);
+    setActiveVideoMedia(null);
+  };
+
+  // Couches plein écran : « retour » les ferme, de la plus haute à la plus basse
+  useHistoryOverlay("player", !!(launchingItem || activeVideoMedia), closePlayer);
+  useHistoryOverlay("audio", isExpanded, () => setIsExpanded(false));
+  useHistoryOverlay("queue", isQueueOpen, () => setIsQueueOpen(false));
+  useHistoryOverlay("playlist-modal", !!modalTracks?.length, closePlaylistModal);
 
   // Helper pour lancer n'importe quel média vidéo
   const handlePlayMedia = async (item: MediaItem | MediaDetail) => {
@@ -137,34 +128,13 @@ const Shell: React.FC = () => {
     }
   };
 
-  const handleOpenMovie = (movieId: string) => {
-    setActiveMovieId(movieId);
-    setTab("movies");
-  };
-
-  const handleOpenShow = (showId: string) => {
-    setActiveShowId(showId);
-    setTab("shows");
-  };
-
-  const handleOpenAlbum = (albumId: string) => {
-    setActivePlaylistId(null);
-    setActiveAlbumId(albumId);
-    setTab("music");
-  };
-
+  const handleOpenMovie = (movieId: string) => navigate({ tab: "movies", movieId });
+  const handleOpenShow = (showId: string) => navigate({ tab: "shows", showId });
+  const handleOpenAlbum = (albumId: string) => navigate({ tab: "music", albumId });
+  const handleOpenPlaylist = (playlistId: string) => navigate({ tab: "music", playlistId });
   const handleOpenArtist = (artist: MediaItem) => {
-    setActivePlaylistId(null);
-    setActiveAlbumId(null);
-    setActiveArtist(artist);
-    setTab("music");
-  };
-
-  const handleOpenPlaylist = (playlistId: string) => {
-    setActivePlaylistId(playlistId);
-    setActiveAlbumId(null);
-    setActiveArtist(null);
-    setTab("music");
+    artistHintRef.current = artist;
+    navigate({ tab: "music", artistId: artist.id });
   };
 
   // Ouvre n'importe quel élément (Ma liste, bibliothèque) selon son type
@@ -179,47 +149,16 @@ const Shell: React.FC = () => {
     }
   };
 
-  const handleTabChange = (newTab: string) => {
-    setTab(newTab);
-    setActiveMovieId(null);
-    setActiveShowId(null);
-    setActiveAlbumId(null);
-    setActiveArtist(null);
-    setActivePlaylistId(null);
-  };
+  const handleTabChange = (newTab: string) => navigate({ tab: newTab as Tab });
 
-  const handleSearchChange = (q: string) => {
-    setSearchQuery(q);
-    if (q && tab !== "search") handleTabChange("search");
-  };
+  // Chaque frappe remplace l'entrée de la recherche : « retour » ramène à l'écran d'avant
+  const handleSearchChange = (q: string) => navigate({ tab: "search", q }, { replace: tab === "search" });
 
-  // Ferme la couche de navigation la plus haute ; renvoie false au niveau racine
-  // (accueil) pour laisser le navigateur quitter l'app. Appelée sur "retour" réel.
-  closeTopRef.current = () => {
-    if (launchingItem || activeVideoMedia) {
-      launchIdRef.current++;
-      setLaunchingItem(null);
-      setLaunchError(null);
-      setActiveVideoMedia(null);
-      return true;
-    }
-    if (activeMovieId || activeShowId || activeAlbumId || activeArtist || activePlaylistId) {
-      setActiveMovieId(null);
-      setActiveShowId(null);
-      setActiveAlbumId(null);
-      setActiveArtist(null);
-      setActivePlaylistId(null);
-      return true;
-    }
-    if (tab !== "home") {
-      handleTabChange("home");
-      return true;
-    }
-    return false;
-  };
+  const handleSortChange = (sortTab: "movies" | "shows") => (sort: string) =>
+    navigate({ tab: sortTab, sort: sort === DEFAULT_SORT ? undefined : sort }, { replace: true, scroll: "top" });
 
   // Les fiches détaillées affichent leur propre en-tête plein écran sur mobile
-  const isDetail = !!(activeMovieId || activeShowId || activeAlbumId || activeArtist || activePlaylistId);
+  const isDetail = !!(route.movieId || route.showId || route.albumId || route.artistId || route.playlistId);
   const hideMobileHeader = isDetail || ["search", "car", "wishlist", "account", "downloads"].includes(tab);
 
   return (
@@ -239,7 +178,7 @@ const Shell: React.FC = () => {
             setTab={handleTabChange}
             homeFilter={homeFilter}
             setHomeFilter={setHomeFilter}
-            searchQuery={searchQuery}
+            searchQuery={route.q ?? ""}
             setSearchQuery={handleSearchChange}
             hideOnMobile={hideMobileHeader}
           />
@@ -269,49 +208,61 @@ const Shell: React.FC = () => {
             )}
 
             {tab === "movies" && (
-              activeMovieId ? (
+              route.movieId ? (
                 <MovieDetailView
-                  movieId={activeMovieId}
-                  onBack={() => setActiveMovieId(null)}
+                  key={route.movieId}
+                  movieId={route.movieId}
+                  onBack={() => back({ tab: "movies" })}
                   onPlayMedia={handlePlayMedia}
                 />
               ) : (
-                <MoviesView onOpenMovie={handleOpenMovie} />
+                <MoviesView
+                  onOpenMovie={handleOpenMovie}
+                  sort={route.sort ?? DEFAULT_SORT}
+                  onSortChange={handleSortChange("movies")}
+                />
               )
             )}
 
             {tab === "shows" && (
-              activeShowId ? (
+              route.showId ? (
                 <ShowDetailView
-                  showId={activeShowId}
-                  onBack={() => setActiveShowId(null)}
+                  key={route.showId}
+                  showId={route.showId}
+                  onBack={() => back({ tab: "shows" })}
                   onPlayMedia={handlePlayMedia}
                 />
               ) : (
-                <ShowsView onOpenShow={handleOpenShow} />
+                <ShowsView
+                  onOpenShow={handleOpenShow}
+                  sort={route.sort ?? DEFAULT_SORT}
+                  onSortChange={handleSortChange("shows")}
+                />
               )
             )}
 
             {tab === "music" && (
-              activePlaylistId ? (
+              route.playlistId ? (
                 <PlaylistDetailView
-                  playlistId={activePlaylistId}
-                  onBack={() => setActivePlaylistId(null)}
-                  onExploreMusic={() => {
-                    setActivePlaylistId(null);
-                    setActiveAlbumId(null);
-                    setActiveArtist(null);
-                  }}
+                  key={route.playlistId}
+                  playlistId={route.playlistId}
+                  onBack={() => back({ tab: "music", playlists: true })}
+                  onExploreMusic={() => navigate({ tab: "music" })}
                 />
-              ) : activeAlbumId ? (
+              ) : route.albumId ? (
                 <AlbumDetailView
-                  albumId={activeAlbumId}
-                  onBack={() => setActiveAlbumId(null)}
+                  key={route.albumId}
+                  albumId={route.albumId}
+                  onBack={() => back({ tab: "music" })}
                 />
               ) : (
                 <MusicView
-                  key={activeArtist?.id || "artists"}
-                  initialArtist={activeArtist}
+                  artistId={route.artistId}
+                  artistHint={artistHintRef.current}
+                  showPlaylists={!!route.playlists}
+                  onSectionChange={(playlists) => navigate({ tab: "music", playlists }, { replace: true })}
+                  onOpenArtist={handleOpenArtist}
+                  onArtistBack={() => back({ tab: "music" })}
                   onOpenAlbum={handleOpenAlbum}
                   onOpenPlaylist={handleOpenPlaylist}
                 />
@@ -334,12 +285,9 @@ const Shell: React.FC = () => {
 
             {tab === "search" && (
               <SearchView
-                query={searchQuery}
-                setQuery={setSearchQuery}
-                onClose={() => {
-                  setSearchQuery("");
-                  handleTabChange("home");
-                }}
+                query={route.q ?? ""}
+                setQuery={(q) => navigate({ tab: "search", q }, { replace: true })}
+                onClose={() => back({ tab: "home" })}
                 onPlayMedia={handlePlayMedia}
                 onOpenMovie={handleOpenMovie}
                 onOpenShow={handleOpenShow}
@@ -361,11 +309,7 @@ const Shell: React.FC = () => {
         <PlayerLoadingScreen
           item={launchingItem}
           status={launchError || "Chargement…"}
-          onClose={() => {
-            launchIdRef.current++;
-            setLaunchingItem(null);
-            setLaunchError(null);
-          }}
+          onClose={closePlayer}
         />
       )}
       {activeVideoMedia && (
@@ -373,7 +317,7 @@ const Shell: React.FC = () => {
           key={activeVideoMedia.id}
           media={activeVideoMedia}
           localSrc={activeLocalSrc}
-          onClose={() => setActiveVideoMedia(null)}
+          onClose={closePlayer}
         />
       )}
 
