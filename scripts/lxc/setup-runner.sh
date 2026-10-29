@@ -26,9 +26,9 @@ mkdir -p /etc/systemd/system/nomad-stream.service.d
 printf '[Service]\nEnvironmentFile=/etc/nomad-stream.env\n' > /etc/systemd/system/nomad-stream.service.d/secrets.conf
 systemctl daemon-reload
 
-# 2. Paquets nécessaires (sudo absent de l'image Debian du LXC)
+# 2. Paquets nécessaires (sudo et git absents de l'image Debian du LXC)
 apt-get update -qq
-DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends sudo rsync curl ca-certificates >/dev/null
+DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends sudo git rsync curl ca-certificates >/dev/null
 
 # 3. Utilisateur dédié, et script de déploiement comme seule commande root autorisée
 id ghrunner &>/dev/null || useradd --system --create-home --home-dir "$RUNNER_DIR" --shell /bin/bash ghrunner

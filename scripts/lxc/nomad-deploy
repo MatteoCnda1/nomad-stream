@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Installe une version de Nomad Stream préparée par la CI, avec contrôle de santé et
-# retour automatique à la version précédente si le service ne repart pas.
+# Installe une version de Nomad Stream extraite et compilée par le runner, avec contrôle de
+# santé et retour automatique à la version précédente si le service ne repart pas.
 # Installé dans /usr/local/bin/nomad-deploy par setup-runner.sh : c'est la seule commande
 # que le runner (utilisateur ghrunner) peut lancer en root (voir /etc/sudoers.d/nomad-deploy).
-# Usage : sudo nomad-deploy <dossier du paquet>   (contient server/ et client/dist/)
+# Usage : sudo nomad-deploy <dossier de la version>   (contient server/ et client/dist/)
 set -euo pipefail
 
 APP=/opt/nomad-stream

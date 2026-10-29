@@ -40,19 +40,6 @@ jobs:
       - run: npm ci
       # "build" = tsc (typecheck strict) puis vite build
       - run: npm run build
-      # Paquet déployable : exactement la version testée (client compilé + serveur sans les tests)
-      - name: Paquet de déploiement
-        working-directory: .
-        run: |
-          mkdir -p bundle/client
-          cp -r client/dist bundle/client/
-          git archive HEAD server | tar -x -C bundle
-          rm -rf bundle/server/test
-      - uses: actions/upload-artifact@v7
-        with:
-          name: nomad-bundle
-          path: bundle/
-          retention-days: 3
 
   server:
     name: Serveur (Node ${{ matrix.node }})
@@ -89,17 +76,23 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
+    outputs:
+      merge_sha: ${{ steps.merge.outputs.sha }}
     steps:
       # --match-head-commit : ne fusionne que le commit qui vient d'être vérifié
       - name: Fusion de la PR
+        id: merge
         env:
           GH_TOKEN: ${{ github.token }}
           PR_URL: ${{ github.event.pull_request.html_url }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: gh pr merge "$PR_URL" --merge --delete-branch --match-head-commit "$HEAD_SHA"
+        run: |
+          gh pr merge "$PR_URL" --merge --delete-branch --match-head-commit "$HEAD_SHA"
+          echo "sha=$(gh pr view "$PR_URL" --json mergeCommit --jq .mergeCommit.oid)" >> "$GITHUB_OUTPUT"
 
   # Une fusion faite avec le jeton de la CI ne déclenche pas de nouveau workflow sur main :
-  # le déploiement suit donc la fusion dans ce même run.
+  # le déploiement suit donc la fusion dans ce même run. Pas d'artefact (le quota de stockage
+  # des repos privés gratuits est partagé et vite plein) : le runner compile lui-même le client.
   deploy:
     name: Déploiement (LXC nomad)
     needs: [client, server, automerge]
@@ -114,9 +107,12 @@ jobs:
       group: deploy-nomad
       cancel-in-progress: false
     steps:
-      - uses: actions/download-artifact@v8
+      # Le commit exact : celui de la fusion qui vient d'avoir lieu, sinon celui du push / lancement
+      - uses: actions/checkout@v7
         with:
-          name: nomad-bundle
-          path: ${{ runner.temp }}/nomad-bundle
+          ref: ${{ needs.automerge.outputs.merge_sha || github.sha }}
+      - name: Build du client
+        working-directory: client
+        run: npm ci --no-audit --no-fund && npm run build
       - name: Installation, redémarrage et contrôle de santé
-        run: sudo /usr/local/bin/nomad-deploy "$RUNNER_TEMP/nomad-bundle"
+        run: sudo /usr/local/bin/nomad-deploy "$GITHUB_WORKSPACE"
