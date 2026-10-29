@@ -120,6 +120,14 @@ export async function searchPlex(query: string): Promise<SearchResults> {
   return cachedFetch(`${BASE_URL}/api/search?q=${encodeURIComponent(query)}`, 15000);
 }
 
+// Lecture continue : titres proches de `seedId`, hors titres déjà dans la file
+export async function fetchRadio(seedId: string, excludeIds: string[], limit = 20): Promise<MediaItem[]> {
+  const params = new URLSearchParams({ seed: seedId, exclude: excludeIds.join(","), limit: String(limit) });
+  const res = await fetch(`${BASE_URL}/api/music/radio?${params}`);
+  if (!res.ok) throw new Error(`HTTP Error [${res.status}]`);
+  return (await res.json()).items;
+}
+
 type TimelineParams = {
   ratingKey: string;
   key?: string;

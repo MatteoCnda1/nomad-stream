@@ -86,6 +86,7 @@ Créer une application **PWA (Progressive Web App)** connectée à **Plex Media 
    * `CarModeView` : Interface épurée avec touches surdimensionnées pour l'écoute en conduite.
    * `VideoPlayer` : Lecteur vidéo avec gestion automatique Direct Play vs HLS, sélection dynamique des flux audio et sous-titres, double-tap +/-10s, synchronisation Plex.
    * `AudioPlayer` : Mini lecteur flottant et modal plein écran avec synchronisation `navigator.mediaSession` (CarPlay / commandes au volant).
+   * **Lecture continue** (#24, `server/radio.js`, `GET /api/music/radio`) : sans répétition (réglage par défaut), la fin de la file enchaîne sur 20 titres proches du dernier (artistes que Plex dit similaires, même genre, même artiste, un peu de hasard ; jamais le même morceau ni deux fois le même artiste d'affilée), ajoutés dès que le dernier titre commence et marqués « Lecture continue » dans la file. Les titres ajoutés à la main passent devant. Répétition : désactivée → toute la file → ce titre.
    * PWA Manifest & Service Worker avec icônes multi-résolutions.
 
 ---

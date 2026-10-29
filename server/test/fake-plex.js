@@ -14,26 +14,45 @@ const movie = (id, title) => ({
 });
 
 // Bibliothèque musicale : artistes (type 8), albums (9) et titres (10)
-const artist = (id, title) => ({ ratingKey: String(id), key: `/library/metadata/${id}/children`, type: "artist", title });
+const artist = (id, title, genres = [], similar = []) => ({
+  ratingKey: String(id),
+  key: `/library/metadata/${id}/children`,
+  type: "artist",
+  title,
+  Genre: genres.map((tag) => ({ tag })),
+  Similar: similar.map((tag) => ({ tag })),
+});
+const ARTIST_IDS = { "Daft Punk": 100, "Beyoncé": 101, "AC/DC": 102, Justice: 103, "Kavinsky": 104 };
 const album = (id, title, artistName) => ({ ratingKey: String(id), type: "album", title, parentTitle: artistName });
 const track = (id, title, artistName, albumName, viewCount = 0) => ({
   ratingKey: String(id),
   type: "track",
   title,
   grandparentTitle: artistName,
+  grandparentRatingKey: String(ARTIST_IDS[artistName]),
   parentTitle: albumName,
   viewCount,
   duration: 240_000,
   Media: [{ Part: [{ id: 1000 + id, key: `/library/parts/${1000 + id}/file.mp3` }] }],
 });
 export const MUSIC = {
-  8: [artist(100, "Daft Punk"), artist(101, "Beyoncé"), artist(102, "AC/DC")],
+  8: [
+    artist(100, "Daft Punk", ["Electronic"], ["Justice", "Inconnu au bataillon"]),
+    artist(101, "Beyoncé", ["R&B"]),
+    artist(102, "AC/DC", ["Rock"]),
+    artist(103, "Justice", ["Electronic"]),
+    artist(104, "Kavinsky", ["Electronic"]),
+  ],
   9: [album(110, "Random Access Memories", "Daft Punk"), album(111, "Highway to Hell", "AC/DC")],
   10: [
     track(120, "Get Lucky (feat. Pharrell Williams)", "Daft Punk", "Random Access Memories", 5),
     track(121, "Instant Crush", "Daft Punk", "Random Access Memories"),
     track(122, "Highway to Hell", "AC/DC", "Highway to Hell"),
     track(123, "Crazy In Love (feat. JAY-Z)", "Beyoncé", "Dangerously In Love"),
+    track(124, "D.A.N.C.E.", "Justice", "†"),
+    track(125, "Genesis", "Justice", "†"),
+    track(126, "Nightcall", "Kavinsky", "OutRun"),
+    track(127, "Get Lucky (Radio Edit)", "Daft Punk", "Get Lucky - Single"),
   ],
 };
 
@@ -70,7 +89,11 @@ function respond(url, res) {
       ],
     });
   }
-  if (/^\/library\/metadata\/\d+$/.test(p)) return json({ Metadata: [movie(Number(p.split("/")[3]), "Alpha")] });
+  if (/^\/library\/metadata\/\d+$/.test(p)) {
+    const id = p.split("/")[3];
+    const music = Object.values(MUSIC).flat().find((m) => m.ratingKey === id);
+    return json({ Metadata: [music || movie(Number(id), "Alpha")] });
+  }
   if (p === "/photo/:/transcode") {
     res.writeHead(200, { "Content-Type": `image/${url.searchParams.get("format") || "jpeg"}` });
     return res.end(IMAGE);
