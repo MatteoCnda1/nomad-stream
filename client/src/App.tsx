@@ -28,6 +28,7 @@ import { MediaItem, MediaDetail } from "./types";
 import { fetchMetadata } from "./api";
 import { offlineUrl } from "./offline";
 import { WifiOff } from "lucide-react";
+import { AuthGate } from "./components/AuthGate";
 
 const Shell: React.FC = () => {
   // Lancée sans réseau, l'appli s'ouvre directement sur les téléchargements
@@ -45,6 +46,11 @@ const Shell: React.FC = () => {
   const [launchingItem, setLaunchingItem] = useState<MediaItem | null>(null);
   const [launchError, setLaunchError] = useState<string | null>(null);
   const launchIdRef = useRef(0);
+  // Navigation / bouton retour : profondeur d'historique déjà poussée, pops à ignorer,
+  // et fermeture de la couche supérieure (recalculée à chaque rendu via une ref).
+  const pushedDepthRef = useRef(0);
+  const suppressPopRef = useRef(0);
+  const closeTopRef = useRef<() => boolean>(() => false);
   const { currentTrack, playTrack } = useAudio();
   const downloads = useDownloads();
 
@@ -63,6 +69,41 @@ const Shell: React.FC = () => {
   useEffect(() => {
     window.scrollTo({ top: 0 });
   }, [tab, activeMovieId, activeShowId, activeAlbumId, activeArtist, activePlaylistId]);
+
+  // Synchronise la pile d'historique du navigateur avec la profondeur de navigation,
+  // pour que le bouton/geste "retour" ferme la couche du dessus (lecteur, fiche, onglet)
+  // plutôt que de quitter la PWA. Les fermetures via l'UI (onBack/onClose) réduisent la
+  // profondeur : l'effet retire alors l'entrée d'historique correspondante.
+  useEffect(() => {
+    const hasPlayer = !!(launchingItem || activeVideoMedia);
+    const detailOpen = !!(activeMovieId || activeShowId || activeAlbumId || activeArtist || activePlaylistId);
+    const depth = (tab !== "home" ? 1 : 0) + (detailOpen ? 1 : 0) + (hasPlayer ? 1 : 0);
+    const pushed = pushedDepthRef.current;
+    if (depth > pushed) {
+      for (let i = 0; i < depth - pushed; i++) window.history.pushState(null, "");
+      pushedDepthRef.current = depth;
+    } else if (depth < pushed) {
+      const diff = pushed - depth;
+      suppressPopRef.current += diff;
+      pushedDepthRef.current = depth;
+      window.history.go(-diff);
+    }
+  }, [tab, activeMovieId, activeShowId, activeAlbumId, activeArtist, activePlaylistId, launchingItem, activeVideoMedia]);
+
+  // Écouteur unique : un "retour" réel ferme la couche du dessus ; les pops provoqués
+  // par la synchro ci-dessus (fermeture UI) sont ignorés.
+  useEffect(() => {
+    const onPop = () => {
+      if (suppressPopRef.current > 0) {
+        suppressPopRef.current--;
+        return;
+      }
+      const closed = closeTopRef.current();
+      if (closed) pushedDepthRef.current = Math.max(0, pushedDepthRef.current - 1);
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
 
   // Helper pour lancer n'importe quel média vidéo
   const handlePlayMedia = async (item: MediaItem | MediaDetail) => {
@@ -150,6 +191,31 @@ const Shell: React.FC = () => {
   const handleSearchChange = (q: string) => {
     setSearchQuery(q);
     if (q && tab !== "search") handleTabChange("search");
+  };
+
+  // Ferme la couche de navigation la plus haute ; renvoie false au niveau racine
+  // (accueil) pour laisser le navigateur quitter l'app. Appelée sur "retour" réel.
+  closeTopRef.current = () => {
+    if (launchingItem || activeVideoMedia) {
+      launchIdRef.current++;
+      setLaunchingItem(null);
+      setLaunchError(null);
+      setActiveVideoMedia(null);
+      return true;
+    }
+    if (activeMovieId || activeShowId || activeAlbumId || activeArtist || activePlaylistId) {
+      setActiveMovieId(null);
+      setActiveShowId(null);
+      setActiveAlbumId(null);
+      setActiveArtist(null);
+      setActivePlaylistId(null);
+      return true;
+    }
+    if (tab !== "home") {
+      handleTabChange("home");
+      return true;
+    }
+    return false;
   };
 
   // Les fiches détaillées affichent leur propre en-tête plein écran sur mobile
@@ -322,15 +388,17 @@ const Shell: React.FC = () => {
 
 export const App: React.FC = () => (
   <ThemeProvider>
-    <WishlistProvider>
-      <DownloadsProvider>
-        <PlaylistProvider>
-          <AudioProvider>
-            <Shell />
-          </AudioProvider>
-        </PlaylistProvider>
-      </DownloadsProvider>
-    </WishlistProvider>
+    <AuthGate>
+      <WishlistProvider>
+        <DownloadsProvider>
+          <PlaylistProvider>
+            <AudioProvider>
+              <Shell />
+            </AudioProvider>
+          </PlaylistProvider>
+        </DownloadsProvider>
+      </WishlistProvider>
+    </AuthGate>
   </ThemeProvider>
 );
 

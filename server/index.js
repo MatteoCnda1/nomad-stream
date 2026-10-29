@@ -10,6 +10,7 @@ import fs from "fs";
 import crypto from "crypto";
 import { createTranscoder } from "./transcoder.js";
 import { createOffline } from "./offline.js";
+import { createAuth } from "./auth.js";
 
 dotenv.config();
 
@@ -141,6 +142,16 @@ app.use(compression({
 
 app.use(cors());
 app.use(express.json());
+
+// Authentification par code d'accès partagé (opt-in : active seulement si ACCESS_CODE est défini).
+// trust proxy : lire x-forwarded-proto derrière `tailscale serve` pour poser un cookie Secure en HTTPS.
+app.set("trust proxy", true);
+const auth = createAuth({ accessCode: process.env.ACCESS_CODE, secret: process.env.SESSION_SECRET });
+app.use(auth.middleware);
+app.post("/api/auth", auth.handleLogin);
+app.post("/api/auth/logout", auth.handleLogout);
+app.get("/api/auth/check", auth.handleCheck);
+if (auth.enabled) console.log("🔒 Code d'accès actif (auth par cookie)");
 
 // Helper: Appel HTTP vers Plex avec headers standards
 async function plexFetch(endpoint, options = {}) {

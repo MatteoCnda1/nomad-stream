@@ -22,6 +22,11 @@ async function cachedFetch<T>(url: string, ttlMs = 30000): Promise<T> {
   const request = (async () => {
     try {
       const res = await fetch(url);
+      if (res.status === 401) {
+        // Cookie d'accès absent ou expiré : réveiller la porte d'entrée
+        window.dispatchEvent(new CustomEvent("nomad-auth-required"));
+        throw new Error("Authentification requise");
+      }
       if (!res.ok) throw new Error(`HTTP Error [${res.status}]`);
       const data = await res.json();
       apiCache.set(url, { data, timestamp: Date.now() });
@@ -148,4 +153,30 @@ export function beaconTimeline(params: TimelineParams) {
   const body = new Blob([JSON.stringify({ ...params, client: getDeviceId() })], { type: "application/json" });
   navigator.sendBeacon?.(`${BASE_URL}/api/timeline`, body);
   forgetProgress(params.ratingKey);
+}
+
+// --- Authentification (code d'accès partagé) ---
+
+export async function checkAuth(): Promise<{ enabled: boolean; authed: boolean }> {
+  try {
+    const res = await fetch(`${BASE_URL}/api/auth/check`);
+    if (!res.ok) return { enabled: true, authed: false };
+    return await res.json();
+  } catch {
+    // Hors connexion : ne pas bloquer l'accès aux téléchargements
+    return { enabled: false, authed: true };
+  }
+}
+
+export async function login(code: string): Promise<boolean> {
+  try {
+    const res = await fetch(`${BASE_URL}/api/auth`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code }),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
 }
