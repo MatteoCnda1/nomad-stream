@@ -72,7 +72,7 @@ Créer une application **PWA (Progressive Web App)** connectée à **Plex Media 
 
 ## 📦 Architecture Réalisée
 
-1. **Serveur Backend Express (`server/index.js`)** :
+1. **Serveur Backend Express (`server/`)** : `index.js` ne fait que la configuration et le montage ; `plex.js` (appels à Plex, mise en forme), `validate.js` (paramètres reçus), `memory-cache.js`, et une route par domaine dans `routes/` (`catalog`, `stream`, `images`, `transcode`, `playback`) :
    * Proxy transparent des flux avec support des requêtes `Range: bytes` pour le streaming direct (MP4/audio).
    * Passerelle de transcodage et remuxing universel HLS Plex (`/api/stream/hls/start.m3u8`, `/api/stream/hls/session/...`, `/api/stream/hls/stop`) pour la lecture universelle des MKV et formats audio avancés (DTS, TrueHD).
    * Proxy d'images WebP haute performance avec cache disque persistant et ETag.
