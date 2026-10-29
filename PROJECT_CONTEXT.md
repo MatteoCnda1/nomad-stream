@@ -50,6 +50,7 @@ Créer une application **PWA (Progressive Web App)** connectée à **Plex Media 
 * **Vignettes WebP via Plex Photo Transcoder** :
   * Format WebP activé avec dimensions adaptées à chaque type d'affichage (300x450 pour les affiches, 480x270 pour les épisodes, 300x300 pour la musique, 960x540 pour le hero).
   * **Poids moyen par image : 15 à 25 Ko** (réduction de **96%** du volume réseau).
+  * **Garde-fou anti-plantage** (`server/image-guard.js`) : certaines pochettes font planter le photo transcoder de Plex (segfault, ~1 min 30 d'indisponibilité ; vu le 29/10/2026 avec une pochette JPEG en niveaux de gris ajoutée par spotdl, qui replantait Plex à chaque ouverture de l'onglet Musique). Une image en cours de transcodage quand Plex tombe est mémorisée dans `NOMAD_CACHE_DIR/plex-crash-images.json` et servie brute ensuite. 4 transcodages photo simultanés au plus (`NOMAD_IMAGE_CONCURRENCY`).
 * **Double Cache Disque & ETag (304 Not Modified)** :
   * Les vignettes WebP générées sont stockées sur le disque NVMe local (`server/.cache/images/`).
   * Temps de réponse sur image en cache : **1,5 ms**.
