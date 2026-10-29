@@ -11,6 +11,7 @@ import crypto from "crypto";
 import { createTranscoder } from "./transcoder.js";
 import { createOffline } from "./offline.js";
 import { createAuth } from "./auth.js";
+import { createImageCache } from "./image-cache.js";
 
 dotenv.config();
 
@@ -127,9 +128,11 @@ const offline = transcoder?.available ? createOffline({ transcoder, cacheDir: CA
 
 // Cache disque pour les miniatures générées (avec les autres caches, hors du dossier de l'appli)
 const IMAGE_CACHE_DIR = process.env.NOMAD_IMAGE_CACHE_DIR || path.join(CACHE_DIR, "images");
-if (!fs.existsSync(IMAGE_CACHE_DIR)) {
-  fs.mkdirSync(IMAGE_CACHE_DIR, { recursive: true });
-}
+// Plafonné (500 Mo par défaut ≈ 25 000 vignettes) : les moins récemment servies partent en premier
+const imageCache = createImageCache({
+  dir: IMAGE_CACHE_DIR,
+  maxBytes: (Number(process.env.NOMAD_IMAGE_CACHE_MB) || 500) * 1024 ** 2,
+});
 
 // -------------------------------------------------------------
 // IN-MEMORY CACHE ACCELERATOR (TTL)
@@ -863,6 +866,7 @@ app.get("/api/image", async (req, res) => {
 
   // 1. Image déjà présente sur disque
   if (fs.existsSync(cachedFilePath)) {
+    imageCache.touch(cachedFilePath);
     res.setHeader("Content-Type", IMAGE_FORMATS[format]);
     res.setHeader("Cache-Control", "public, max-age=2592000, immutable"); // Cache 30 jours
     res.setHeader("ETag", etag);
@@ -888,7 +892,10 @@ app.get("/api/image", async (req, res) => {
     }
     const buffer = Buffer.from(await upstream.arrayBuffer());
     // Sauvegarde sur disque asynchrone
-    fs.promises.writeFile(cachedFilePath, buffer).catch((err) => console.error("Cache file write error:", err));
+    fs.promises
+      .writeFile(cachedFilePath, buffer)
+      .then(() => imageCache.noteWrite())
+      .catch((err) => console.error("Cache file write error:", err));
     res.setHeader("Content-Type", upstream.headers.get("content-type") || IMAGE_FORMATS[format]);
     res.setHeader("Cache-Control", cacheControl);
     res.setHeader("ETag", etag);
