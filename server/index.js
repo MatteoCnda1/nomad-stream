@@ -27,6 +27,8 @@ if (!PLEX_TOKEN) {
   process.exit(1);
 }
 const CLIENT_ID = "nomad-stream-pwa-v1";
+// Délai maximal d'une requête de métadonnées ou d'image vers Plex (en-têtes et corps compris)
+const PLEX_TIMEOUT_MS = Number(process.env.PLEX_TIMEOUT_MS) || 15000;
 
 // Identité "Plex Web / Chrome" envoyée au transcodeur : sans elle, Plex n'applique aucun profil client,
 // ignore les plafonds de débit et recopie le flux d'origine en segments de 10 s (lancement très lent)
@@ -49,6 +51,27 @@ const QUALITY_PRESETS = {
 
 const isNumericId = (v) => typeof v === "string" && /^\d{1,12}$/.test(v);
 const isSessionId = (v) => typeof v === "string" && /^[A-Za-z0-9_-]{1,80}$/.test(v);
+
+// Images servies par /api/image : uniquement les chemins d'images que Plex renvoie dans ses
+// métadonnées. Sans cette liste, le paramètre `path` permettait de lire n'importe quelle page
+// de Plex avec le token admin (réglages, sessions en cours…).
+const PLEX_IMAGE_PATHS = [
+  /^\/library\/metadata\/\d+\/[A-Za-z]+\/\d+$/, // thumb, art, banner…
+  /^\/library\/collections\/\d+\/composite\/\d+$/,
+  /^\/playlists\/\d+\/composite\/\d+$/,
+  /^\/:\/resources\/[\w-]+\.(?:png|jpe?g)$/, // images par défaut de Plex
+];
+const isPlexImagePath = (v) => typeof v === "string" && PLEX_IMAGE_PATHS.some((re) => re.test(v));
+// Clés de fichier (flux directs) et sous-chemins HLS : jamais de segment "..", qui ferait sortir
+// de /library/parts/ (ou de la session) vers n'importe quelle page de Plex
+const hasDotSegment = (v) => v.split("/").some((s) => s === "." || s === "..");
+const isPartKey = (v) =>
+  typeof v === "string" && /^\/library\/parts\/\d+(?:\/[\w.-]+)+$/.test(v) && !hasDotSegment(v);
+const isHlsSubpath = (v) => typeof v === "string" && /^[\w.-]+(?:\/[\w.-]+)*$/.test(v) && !hasDotSegment(v);
+// Liste fermée : le format sert aussi d'extension au fichier de cache (jamais de valeur libre
+// dans un chemin de fichier : `format=/../../etc/passwd` lisait n'importe quel fichier)
+const IMAGE_FORMATS = { webp: "image/webp", jpeg: "image/jpeg", png: "image/png" };
+const clampInt = (v, def, min, max) => Math.min(max, Math.max(min, parseInt(v, 10) || def));
 
 // Un identifiant Plex par appareil : Plex mémorise ses décisions de transcodage par client,
 // et deux appareils partageant le même identifiant se gênent mutuellement
@@ -84,7 +107,7 @@ async function fetchPlex(url, { method = "GET", headers = {}, timeoutMs = 20000,
       lastError = error;
       if (signal?.aborted) throw error;
     }
-    await sleep(400 * (attempt + 1));
+    if (attempt < retries) await sleep(400 * (attempt + 1));
   }
   throw lastError;
 }
@@ -102,8 +125,8 @@ const transcoder = process.env.NOMAD_TRANSCODER === "vaapi"
   : null;
 const offline = transcoder?.available ? createOffline({ transcoder, cacheDir: CACHE_DIR }) : null;
 
-// Cache disque pour les miniatures générées
-const IMAGE_CACHE_DIR = path.join(__dirname, ".cache/images");
+// Cache disque pour les miniatures générées (avec les autres caches, hors du dossier de l'appli)
+const IMAGE_CACHE_DIR = process.env.NOMAD_IMAGE_CACHE_DIR || path.join(CACHE_DIR, "images");
 if (!fs.existsSync(IMAGE_CACHE_DIR)) {
   fs.mkdirSync(IMAGE_CACHE_DIR, { recursive: true });
 }
@@ -153,19 +176,18 @@ app.post("/api/auth/logout", auth.handleLogout);
 app.get("/api/auth/check", auth.handleCheck);
 if (auth.enabled) console.log("🔒 Code d'accès actif (auth par cookie)");
 
-// Helper: Appel HTTP vers Plex avec headers standards
-async function plexFetch(endpoint, options = {}) {
-  const separator = endpoint.includes("?") ? "&" : "?";
-  const url = `${PLEX_URL}${endpoint}${separator}X-Plex-Token=${PLEX_TOKEN}&X-Plex-Client-Identifier=${CLIENT_ID}`;
-  
-  const headers = {
-    Accept: "application/json",
-    ...(options.headers || {}),
-  };
-
-  const response = await fetch(url, { ...options, headers });
+// Helper: appel JSON vers Plex (métadonnées), avec délai maximal global et une nouvelle tentative
+// (micro-coupure Tailscale, erreur 5xx). Sans délai, un Plex figé bloquait la requête indéfiniment.
+async function plexFetch(endpoint) {
+  const response = await fetchPlex(plexUrl(endpoint), {
+    headers: { Accept: "application/json" },
+    timeoutMs: PLEX_TIMEOUT_MS,
+    retries: 1,
+    signal: AbortSignal.timeout(PLEX_TIMEOUT_MS * 2),
+  });
   if (!response.ok) {
-    throw new Error(`Plex API Error [${response.status}] on ${endpoint}`);
+    response.body?.cancel().catch(() => {});
+    throw new Error(`Plex API Error [${response.status}] on ${endpoint.split("?")[0]}`);
   }
   return response.json();
 }
@@ -351,6 +373,7 @@ app.get("/api/shows", async (req, res) => {
 // 5. Détail d'une Série avec ses Saisons et Épisodes (Cache 120s)
 app.get("/api/shows/:id", async (req, res) => {
   const showId = req.params.id;
+  if (!isNumericId(showId)) return res.status(400).json({ error: "id invalide" });
   const cacheKey = `show_detail_${showId}`;
   const cached = cacheGet(cacheKey);
   if (cached) return res.json(cached);
@@ -416,6 +439,7 @@ app.get("/api/music/artists", async (req, res) => {
 // 7. Détail d'un Artiste avec ses Albums (Cache 120s)
 app.get("/api/music/artists/:id", async (req, res) => {
   const artistId = req.params.id;
+  if (!isNumericId(artistId)) return res.status(400).json({ error: "id invalide" });
   const cacheKey = `artist_detail_${artistId}`;
   const cached = cacheGet(cacheKey);
   if (cached) return res.json(cached);
@@ -443,6 +467,7 @@ app.get("/api/music/artists/:id", async (req, res) => {
 // 8. Détail d'un Album avec ses Pistes (Cache 120s)
 app.get("/api/music/albums/:id", async (req, res) => {
   const albumId = req.params.id;
+  if (!isNumericId(albumId)) return res.status(400).json({ error: "id invalide" });
   const cacheKey = `album_detail_${albumId}`;
   const cached = cacheGet(cacheKey);
   if (cached) return res.json(cached);
@@ -515,6 +540,7 @@ app.get("/api/search", async (req, res) => {
 // 10. Détail complet d'un média (Streams audio, sous-titres, etc.) (Cache 300s)
 app.get("/api/metadata/:id", async (req, res) => {
   const id = req.params.id;
+  if (!isNumericId(id)) return res.status(400).json({ error: "id invalide" });
   const cacheKey = `metadata_${id}`;
   const cached = cacheGet(cacheKey);
   if (cached) return res.json(cached);
@@ -675,14 +701,14 @@ async function proxyStream(req, res, targetUrl, { timeoutMs = 20000, retries = 1
 // 12. Streaming direct fichier vidéo (MP4 Direct Play avec support Range HTTP)
 app.get("/api/stream/file", (req, res) => {
   const partKey = req.query.key;
-  if (!partKey || !String(partKey).startsWith("/library/parts/")) return res.status(400).send("Missing part key");
+  if (!isPartKey(partKey)) return res.status(400).send("Clé de fichier invalide");
   proxyStream(req, res, plexUrl(partKey));
 });
 
 // 13. Streaming Audio direct (Musique, CarPlay, écran de verrouillage)
 app.get("/api/stream/audio", (req, res) => {
   const partKey = req.query.key;
-  if (!partKey || !String(partKey).startsWith("/library/parts/")) return res.status(400).send("Missing part key");
+  if (!isPartKey(partKey)) return res.status(400).send("Clé de fichier invalide");
   proxyStream(req, res, plexUrl(partKey));
 });
 
@@ -772,6 +798,7 @@ app.get("/api/stream/hls/session/:session/*", (req, res) => {
   const session = req.params.session;
   if (!isSessionId(session)) return res.status(400).send("Session invalide");
   const subpath = req.params[0];
+  if (!isHlsSubpath(subpath)) return res.status(400).send("Chemin invalide");
   touchSession(session);
   const isPlaylist = subpath.endsWith(".m3u8");
   const targetUrl = plexUrl(
@@ -819,65 +846,55 @@ app.post("/api/stream/hls/stop", stopHlsSession);
 
 // 18. Proxy & Cache Haute Performance d'Images (WebP + Cache Disque + ETag)
 app.get("/api/image", async (req, res) => {
-  try {
-    const imagePath = req.query.path;
-    if (!imagePath) return res.status(400).send("Missing path");
+  const imagePath = req.query.path;
+  const format = req.query.format || "webp";
+  if (!isPlexImagePath(imagePath) || !Object.hasOwn(IMAGE_FORMATS, format)) {
+    return res.status(400).send("Image invalide");
+  }
+  const width = clampInt(req.query.width, 300, 16, 2000);
+  const height = clampInt(req.query.height, 450, 16, 2000);
 
-    const width = parseInt(req.query.width, 10) || 300;
-    const height = parseInt(req.query.height, 10) || 450;
-    const format = req.query.format || "webp";
+  const cacheKey = crypto.createHash("md5").update(`${imagePath}_${width}_${height}_${format}`).digest("hex");
+  const cachedFilePath = path.join(IMAGE_CACHE_DIR, `${cacheKey}.${format}`);
+  const etag = `"${cacheKey}"`;
 
-    const hashStr = `${imagePath}_${width}_${height}_${format}`;
-    const cacheKey = crypto.createHash("md5").update(hashStr).digest("hex");
-    const cachedFilePath = path.join(IMAGE_CACHE_DIR, `${cacheKey}.${format}`);
-    const etag = `"${cacheKey}"`;
+  // Validation du cache HTTP navigateur
+  if (req.headers["if-none-match"] === etag) return res.status(304).end();
 
-    // Validation du cache HTTP navigateur
-    if (req.headers["if-none-match"] === etag) {
-      return res.status(304).end();
-    }
-
-    // 1. Image déjà présente sur disque
-    if (fs.existsSync(cachedFilePath)) {
-      res.setHeader("Content-Type", format === "webp" ? "image/webp" : "image/jpeg");
-      res.setHeader("Cache-Control", "public, max-age=2592000, immutable"); // Cache 30 jours
-      res.setHeader("ETag", etag);
-      return fs.createReadStream(cachedFilePath).pipe(res);
-    }
-
-    // 2. Transcodage ultra-léger via le photo transcoder de Plex
-    const innerUrl = `${imagePath}${imagePath.includes("?") ? "&" : "?"}X-Plex-Token=${PLEX_TOKEN}`;
-    const plexPhotoUrl = `${PLEX_URL}/photo/:/transcode?width=${width}&height=${height}&minSize=1&upscale=1&format=${format}&url=${encodeURIComponent(innerUrl)}&X-Plex-Token=${PLEX_TOKEN}`;
-
-    const upstreamRes = await fetch(plexPhotoUrl);
-    if (!upstreamRes.ok) {
-      // Fallback sur image brute si le photo transcoder échoue
-      const rawUrl = `${PLEX_URL}${imagePath}${imagePath.includes("?") ? "&" : "?"}X-Plex-Token=${PLEX_TOKEN}`;
-      const fallbackRes = await fetch(rawUrl);
-      if (!fallbackRes.ok) return res.status(fallbackRes.status).send("Image not found");
-
-      const buffer = Buffer.from(await fallbackRes.arrayBuffer());
-      fs.promises.writeFile(cachedFilePath, buffer).catch(() => {});
-      res.setHeader("Content-Type", fallbackRes.headers.get("content-type") || "image/jpeg");
-      res.setHeader("Cache-Control", "public, max-age=604800");
-      res.setHeader("ETag", etag);
-      return res.send(buffer);
-    }
-
-    const contentType = upstreamRes.headers.get("content-type") || (format === "webp" ? "image/webp" : "image/jpeg");
-    const buffer = Buffer.from(await upstreamRes.arrayBuffer());
-
-    // Sauvegarde sur disque asynchrone
-    fs.promises.writeFile(cachedFilePath, buffer).catch((err) => {
-      console.error("Cache file write error:", err);
-    });
-
-    res.setHeader("Content-Type", contentType);
+  // 1. Image déjà présente sur disque
+  if (fs.existsSync(cachedFilePath)) {
+    res.setHeader("Content-Type", IMAGE_FORMATS[format]);
     res.setHeader("Cache-Control", "public, max-age=2592000, immutable"); // Cache 30 jours
     res.setHeader("ETag", etag);
+    return fs.createReadStream(cachedFilePath).pipe(res);
+  }
+
+  const get = (url) =>
+    fetchPlex(url, { timeoutMs: PLEX_TIMEOUT_MS, retries: 1, signal: AbortSignal.timeout(PLEX_TIMEOUT_MS * 2) });
+  try {
+    // 2. Transcodage ultra-léger via le photo transcoder de Plex
+    const innerUrl = `${imagePath}?X-Plex-Token=${PLEX_TOKEN}`;
+    let upstream = await get(plexUrl("/photo/:/transcode", { width, height, minSize: "1", upscale: "1", format, url: innerUrl }));
+    let cacheControl = "public, max-age=2592000, immutable"; // Cache 30 jours
+    if (!upstream.ok) {
+      // Repli sur l'image brute si le photo transcoder échoue
+      upstream.body?.cancel().catch(() => {});
+      upstream = await get(plexUrl(imagePath));
+      if (!upstream.ok) {
+        upstream.body?.cancel().catch(() => {});
+        return res.status(upstream.status === 404 ? 404 : 502).send("Image introuvable");
+      }
+      cacheControl = "public, max-age=604800";
+    }
+    const buffer = Buffer.from(await upstream.arrayBuffer());
+    // Sauvegarde sur disque asynchrone
+    fs.promises.writeFile(cachedFilePath, buffer).catch((err) => console.error("Cache file write error:", err));
+    res.setHeader("Content-Type", upstream.headers.get("content-type") || IMAGE_FORMATS[format]);
+    res.setHeader("Cache-Control", cacheControl);
+    res.setHeader("ETag", etag);
     res.send(buffer);
-  } catch (error) {
-    res.status(500).send("Error fetching image");
+  } catch {
+    if (!res.headersSent) res.status(502).send("Image indisponible");
   }
 });
 
@@ -939,8 +956,11 @@ app.get("/api/tx/:job/v:variant/index.m3u8", (req, res) => {
 app.get("/api/tx/:job/v:variant/:n.ts", async (req, res) => {
   const job = isJobId(req.params.job) && transcoder?.getJob(req.params.job);
   if (!job) return res.status(404).send("Session inconnue");
+  const variant = Number(req.params.variant);
+  const n = Number(req.params.n);
+  if (!Number.isInteger(variant) || !Number.isInteger(n)) return res.status(404).send("Segment inexistant");
   try {
-    const file = await transcoder.segment(job, Number(req.params.variant), Number(req.params.n));
+    const file = await transcoder.segment(job, variant, n);
     res.setHeader("Content-Type", "video/mp2t");
     res.setHeader("Cache-Control", "private, max-age=3600");
     res.sendFile(file);
