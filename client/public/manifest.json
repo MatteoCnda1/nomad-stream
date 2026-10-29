@@ -1,8 +1,12 @@
 {
+  "id": "/",
   "name": "Nomad Stream",
-  "short_name": "NomadStream",
-  "description": "Lecteur média autonome Plex, Tailscale & CarPlay",
+  "short_name": "Nomad Stream",
+  "description": "Vos films, séries et musique Plex, partout",
+  "lang": "fr",
+  "dir": "ltr",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
   "background_color": "#0c0c0e",
   "theme_color": "#0c0c0e",
@@ -18,13 +22,56 @@
       "src": "/icon-192.png",
       "sizes": "192x192",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "any"
     },
     {
       "src": "/icon-512.png",
       "sizes": "512x512",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Rechercher",
+      "short_name": "Recherche",
+      "url": "/recherche",
+      "icons": [{ "src": "/shortcut-search.png", "sizes": "96x96", "type": "image/png" }]
+    },
+    {
+      "name": "Téléchargements",
+      "short_name": "Hors ligne",
+      "description": "Vos vidéos disponibles sans connexion",
+      "url": "/telechargements",
+      "icons": [{ "src": "/shortcut-downloads.png", "sizes": "96x96", "type": "image/png" }]
+    },
+    {
+      "name": "Mode voiture",
+      "short_name": "Voiture",
+      "url": "/voiture",
+      "icons": [{ "src": "/shortcut-car.png", "sizes": "96x96", "type": "image/png" }]
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "/screenshots/films-mobile.jpg",
+      "sizes": "780x1688",
+      "type": "image/jpeg",
+      "form_factor": "narrow",
+      "label": "Votre bibliothèque de films, sur téléphone"
+    },
+    {
+      "src": "/screenshots/films-desktop.jpg",
+      "sizes": "1280x800",
+      "type": "image/jpeg",
+      "form_factor": "wide",
+      "label": "Votre bibliothèque de films, sur ordinateur"
     }
   ],
   "categories": ["entertainment", "music", "video"]
