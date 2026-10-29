@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { useAudio } from "../context/AudioContext";
+import { useAudio, useAudioTime } from "../context/AudioContext";
 import { useWishlist } from "../context/WishlistContext";
 import { usePlaylist } from "../context/PlaylistContext";
 import { useTheme } from "../context/ThemeContext";
@@ -60,12 +60,51 @@ const HeartButton: React.FC<{
   </button>
 );
 
+// Seuls ces composants lisent la position (mise à jour ~4 fois par seconde) : le reste du
+// lecteur, dont la file d'attente, n'est pas redessiné pendant la lecture (#31)
+const Scrubber: React.FC = () => {
+  const { seek } = useAudio();
+  const { currentTime, duration } = useAudioTime();
+  const progress = duration > 0 ? (currentTime / duration) * 100 : 0;
+  return (
+    <input
+      type="range"
+      min={0}
+      max={duration || 100}
+      step={0.1}
+      value={currentTime}
+      onChange={(e) => seek(parseFloat(e.target.value))}
+      aria-label="Position de lecture"
+      className="range w-full"
+      style={{ "--pct": `${progress}%` } as React.CSSProperties}
+    />
+  );
+};
+
+const Clock: React.FC<{ show: "elapsed" | "total" | "remaining" }> = ({ show }) => {
+  const { currentTime, duration } = useAudioTime();
+  if (show === "elapsed") return <span>{formatClock(currentTime)}</span>;
+  if (show === "total") return <span>{formatClock(duration)}</span>;
+  return <span>-{formatClock(Math.max(0, duration - currentTime))}</span>;
+};
+
+// Sans transition, et en transform plutôt qu'en largeur : une largeur animée relançait la mise en
+// page et le flou du mini-lecteur à chaque image (coûteux avec 805 tuiles d'artistes affichées).
+// La barre avance de moins d'un pixel par mise à jour : l'animation ne se voyait pas.
+const MiniProgress: React.FC = () => {
+  const { currentTime, duration } = useAudioTime();
+  return (
+    <span
+      className="block h-full w-full origin-left bg-accent"
+      style={{ transform: `scaleX(${duration > 0 ? Math.min(1, currentTime / duration) : 0})` }}
+    />
+  );
+};
+
 export const AudioPlayer: React.FC = () => {
   const {
     currentTrack,
     isPlaying,
-    currentTime,
-    duration,
     queue,
     queueIndex,
     isExpanded,
@@ -74,7 +113,7 @@ export const AudioPlayer: React.FC = () => {
     repeatMode,
     shuffleMode,
     togglePlay,
-    seek,
+    seekBy,
     nextTrack,
     previousTrack,
     setIsExpanded,
@@ -98,7 +137,6 @@ export const AudioPlayer: React.FC = () => {
 
   if (!currentTrack) return null;
 
-  const progress = duration > 0 ? (currentTime / duration) * 100 : 0;
   const albumArt = currentTrack.thumb || currentTrack.parentThumb || "/icon.svg";
   const artist =
     currentTrack.grandparentTitle || currentTrack.parentTitle || "Artiste inconnu";
@@ -112,19 +150,7 @@ export const AudioPlayer: React.FC = () => {
     upNext.reduce((acc, t) => acc + (t.duration || 0), 0) / 60000
   );
 
-  const scrubber = (
-    <input
-      type="range"
-      min={0}
-      max={duration || 100}
-      step={0.1}
-      value={currentTime}
-      onChange={(e) => seek(parseFloat(e.target.value))}
-      aria-label="Position de lecture"
-      className="range w-full"
-      style={{ "--pct": `${progress}%` } as React.CSSProperties}
-    />
-  );
+  const scrubber = <Scrubber />;
 
   return (
     <>
@@ -189,7 +215,7 @@ export const AudioPlayer: React.FC = () => {
 
                 <button
                   type="button"
-                  onClick={() => seek(Math.max(0, currentTime - 15))}
+                  onClick={() => seekBy(-15)}
                   aria-label="Reculer de 15 secondes"
                   className="press w-8 h-8 grid place-items-center text-muted hover:text-fg"
                 >
@@ -229,7 +255,7 @@ export const AudioPlayer: React.FC = () => {
 
                 <button
                   type="button"
-                  onClick={() => seek(Math.min(duration, currentTime + 15))}
+                  onClick={() => seekBy(15)}
                   aria-label="Avancer de 15 secondes"
                   className="press w-8 h-8 grid place-items-center text-muted hover:text-fg"
                 >
@@ -254,9 +280,9 @@ export const AudioPlayer: React.FC = () => {
               </div>
 
               <div className="w-full max-w-[560px] flex items-center gap-2.5 text-xs text-muted tabular-nums">
-                <span>{formatClock(currentTime)}</span>
+                <Clock show="elapsed" />
                 {scrubber}
-                <span>{formatClock(duration)}</span>
+                <Clock show="total" />
               </div>
             </div>
 
@@ -490,10 +516,7 @@ export const AudioPlayer: React.FC = () => {
             </button>
 
             <span className="absolute left-2.5 right-2.5 bottom-0 h-0.5 bg-line2">
-              <span
-                className="block h-full bg-accent transition-[width] duration-200"
-                style={{ width: `${progress}%` }}
-              />
+              <MiniProgress />
             </span>
           </div>
         </>
@@ -611,8 +634,8 @@ export const AudioPlayer: React.FC = () => {
                 <div className="mt-[22px]">
                   {scrubber}
                   <div className="mt-2.5 flex justify-between text-xs text-muted tabular-nums">
-                    <span>{formatClock(currentTime)}</span>
-                    <span>-{formatClock(Math.max(0, duration - currentTime))}</span>
+                    <Clock show="elapsed" />
+                    <Clock show="remaining" />
                   </div>
                 </div>
 
@@ -633,7 +656,7 @@ export const AudioPlayer: React.FC = () => {
                   {/* Recul 15s */}
                   <button
                     type="button"
-                    onClick={() => seek(Math.max(0, currentTime - 15))}
+                    onClick={() => seekBy(-15)}
                     aria-label="Reculer de 15 secondes"
                     className="press w-[44px] h-[44px] grid place-items-center text-muted hover:text-fg"
                   >
@@ -677,7 +700,7 @@ export const AudioPlayer: React.FC = () => {
                   {/* Avance 15s */}
                   <button
                     type="button"
-                    onClick={() => seek(Math.min(duration, currentTime + 15))}
+                    onClick={() => seekBy(15)}
                     aria-label="Avancer de 15 secondes"
                     className="press w-[44px] h-[44px] grid place-items-center text-muted hover:text-fg"
                   >

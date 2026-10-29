@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useRef, useEffect, useCallback } from "react";
+import React, { createContext, useContext, useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { MediaItem } from "../types";
 import { fetchRadio, reportTimeline } from "../api";
 
@@ -7,8 +7,6 @@ export type RepeatMode = "all" | "one" | "off";
 interface AudioContextType {
   currentTrack: MediaItem | null;
   isPlaying: boolean;
-  currentTime: number;
-  duration: number;
   queue: MediaItem[];
   queueIndex: number;
   isExpanded: boolean;
@@ -20,6 +18,7 @@ interface AudioContextType {
   pauseTrack: () => void;
   togglePlay: () => void;
   seek: (seconds: number) => void;
+  seekBy: (delta: number) => void;
   nextTrack: () => void;
   previousTrack: () => void;
   setIsExpanded: (expanded: boolean) => void;
@@ -37,7 +36,12 @@ interface AudioContextType {
   toggleShuffleMode: () => void;
 }
 
+// Contextes séparés : la position de lecture change ~4 fois par seconde. Dans le contexte
+// principal, elle faisait re-rendre toute l'appli (vue affichée, chaque ligne de titre, jusqu'à
+// 805 tuiles d'artistes) pendant toute l'écoute (#31). Seuls les curseurs et les compteurs de
+// temps lisent useAudioTime() ; la valeur de useAudio() ne change qu'avec la file ou l'état.
 const AudioContext = createContext<AudioContextType | null>(null);
+const AudioTimeContext = createContext<{ currentTime: number; duration: number }>({ currentTime: 0, duration: 0 });
 
 export function AudioProvider({ children }: { children: React.ReactNode }) {
   const [currentTrack, setCurrentTrack] = useState<MediaItem | null>(null);
@@ -300,7 +304,7 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
   }, [currentTrack, nextTrack]);
 
   // Lancement d'un titre
-  const playTrack = (track: MediaItem, newQueue?: MediaItem[], startIndex?: number) => {
+  const playTrack = useCallback((track: MediaItem, newQueue?: MediaItem[], startIndex?: number) => {
     if (!audioRef.current) return;
 
     if (newQueue && newQueue.length > 0) {
@@ -343,37 +347,49 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
     audioRef.current.src = streamUrl;
     audioRef.current.currentTime = 0;
     audioRef.current.play().catch((err) => console.log("Audio autoplay prevented:", err));
-  };
+  }, []);
 
-  const pauseTrack = () => {
+  const pauseTrack = useCallback(() => {
     if (audioRef.current) {
       audioRef.current.pause();
       setIsPlaying(false);
     }
-  };
+  }, []);
 
-  const togglePlay = () => {
-    if (!audioRef.current) return;
-    if (isPlaying) {
-      audioRef.current.pause();
+  const togglePlay = useCallback(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    if (!audio.paused) {
+      audio.pause();
     } else {
-      audioRef.current.play().catch((e) => console.log(e));
+      audio.play().catch((e) => console.log(e));
     }
-  };
+  }, []);
 
-  const setVolume = (value: number) => {
+  const setVolume = useCallback((value: number) => {
     const v = Math.min(1, Math.max(0, value));
     if (audioRef.current) audioRef.current.volume = v;
     setVolumeState(v);
-  };
+  }, []);
 
-  const seek = (seconds: number) => {
+  const seek = useCallback((seconds: number) => {
     if (!audioRef.current) return;
     audioRef.current.currentTime = seconds;
     setCurrentTime(seconds);
-  };
+  }, []);
 
-  const previousTrack = () => {
+  // Avance ou recul relatif (boutons ±15 s), sans que l'appelant ait à lire la position
+  const seekBy = useCallback(
+    (delta: number) => {
+      const audio = audioRef.current;
+      if (!audio) return;
+      const end = isFinite(audio.duration) ? audio.duration : Infinity;
+      seek(Math.min(end, Math.max(0, audio.currentTime + delta)));
+    },
+    [seek]
+  );
+
+  const previousTrack = useCallback(() => {
     const q = queueRef.current;
     if (q.length === 0) return;
     // Si on a écouté plus de 3 secondes, revenir au début de la piste
@@ -383,11 +399,11 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
     }
     const prevIdx = (queueIndexRef.current - 1 + q.length) % q.length;
     playAtIndex(prevIdx);
-  };
+  }, [seek, playAtIndex]);
 
   // --- Gestion de la file d'attente (Queue) ---
 
-  const addToQueue = (trackOrTracks: MediaItem | MediaItem[]) => {
+  const addToQueue = useCallback((trackOrTracks: MediaItem | MediaItem[]) => {
     const tracksToAdd = Array.isArray(trackOrTracks) ? trackOrTracks : [trackOrTracks];
     if (tracksToAdd.length === 0) return;
 
@@ -405,9 +421,9 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
     const updated = [...q.slice(0, at), ...tracksToAdd, ...q.slice(at)];
     setQueue(updated);
     queueRef.current = updated;
-  };
+  }, [playTrack]);
 
-  const playNext = (trackOrTracks: MediaItem | MediaItem[]) => {
+  const playNext = useCallback((trackOrTracks: MediaItem | MediaItem[]) => {
     const tracksToAdd = Array.isArray(trackOrTracks) ? trackOrTracks : [trackOrTracks];
     if (tracksToAdd.length === 0) return;
 
@@ -421,9 +437,9 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
     updated.splice(cur + 1, 0, ...tracksToAdd);
     setQueue(updated);
     queueRef.current = updated;
-  };
+  }, [playTrack]);
 
-  const removeFromQueue = (index: number) => {
+  const removeFromQueue = useCallback((index: number) => {
     const q = queueRef.current;
     if (index < 0 || index >= q.length) return;
 
@@ -454,9 +470,9 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
       setQueueIndex(nextCur);
       queueIndexRef.current = nextCur;
     }
-  };
+  }, [playAtIndex]);
 
-  const clearQueue = () => {
+  const clearQueue = useCallback(() => {
     const curTrack = currentTrackRef.current;
     if (!curTrack) {
       setQueue([]);
@@ -469,9 +485,9 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
     queueRef.current = [curTrack];
     setQueueIndex(0);
     queueIndexRef.current = 0;
-  };
+  }, []);
 
-  const reorderQueue = (fromIndex: number, toIndex: number) => {
+  const reorderQueue = useCallback((fromIndex: number, toIndex: number) => {
     const q = queueRef.current;
     if (fromIndex < 0 || fromIndex >= q.length || toIndex < 0 || toIndex >= q.length) return;
 
@@ -493,13 +509,13 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
     queueRef.current = updated;
     setQueueIndex(newCur);
     queueIndexRef.current = newCur;
-  };
+  }, []);
 
-  const skipToQueueIndex = (index: number) => {
+  const skipToQueueIndex = useCallback((index: number) => {
     playAtIndex(index);
-  };
+  }, [playAtIndex]);
 
-  const shuffleQueue = () => {
+  const shuffleQueue = useCallback(() => {
     const q = queueRef.current;
     const cur = queueIndexRef.current;
     if (q.length <= cur + 2) return;
@@ -512,60 +528,90 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
     const updated = [...pastAndCurrent, ...shuffled];
     setQueue(updated);
     queueRef.current = updated;
-  };
+  }, []);
 
   // Désactivée (lecture continue) → toute la file → ce titre
-  const toggleRepeatMode = () => {
+  const toggleRepeatMode = useCallback(() => {
     setRepeatMode((prev) => {
       if (prev === "off") return "all";
       if (prev === "all") return "one";
       return "off";
     });
-  };
+  }, []);
 
-  const toggleShuffleMode = () => {
+  const toggleShuffleMode = useCallback(() => {
     setShuffleMode((prev) => {
       const next = !prev;
       if (next) shuffleQueue();
       return next;
     });
-  };
+  }, [shuffleQueue]);
+
+  const value = useMemo(
+    () => ({
+      currentTrack,
+      isPlaying,
+      queue,
+      queueIndex,
+      isExpanded,
+      isQueueOpen,
+      volume,
+      repeatMode,
+      shuffleMode,
+      playTrack,
+      pauseTrack,
+      togglePlay,
+      seek,
+      seekBy,
+      nextTrack,
+      previousTrack,
+      setIsExpanded,
+      setIsQueueOpen,
+      setVolume,
+      addToQueue,
+      playNext,
+      removeFromQueue,
+      clearQueue,
+      reorderQueue,
+      skipToQueueIndex,
+      shuffleQueue,
+      toggleRepeatMode,
+      toggleShuffleMode,
+    }),
+    [
+      currentTrack,
+      isPlaying,
+      queue,
+      queueIndex,
+      isExpanded,
+      isQueueOpen,
+      volume,
+      repeatMode,
+      shuffleMode,
+      playTrack,
+      pauseTrack,
+      togglePlay,
+      seek,
+      seekBy,
+      nextTrack,
+      previousTrack,
+      setVolume,
+      addToQueue,
+      playNext,
+      removeFromQueue,
+      clearQueue,
+      reorderQueue,
+      skipToQueueIndex,
+      shuffleQueue,
+      toggleRepeatMode,
+      toggleShuffleMode,
+    ]
+  );
+  const time = useMemo(() => ({ currentTime, duration }), [currentTime, duration]);
 
   return (
-    <AudioContext.Provider
-      value={{
-        currentTrack,
-        isPlaying,
-        currentTime,
-        duration,
-        queue,
-        queueIndex,
-        isExpanded,
-        isQueueOpen,
-        volume,
-        repeatMode,
-        shuffleMode,
-        playTrack,
-        pauseTrack,
-        togglePlay,
-        seek,
-        nextTrack,
-        previousTrack,
-        setIsExpanded,
-        setIsQueueOpen,
-        setVolume,
-        addToQueue,
-        playNext,
-        removeFromQueue,
-        clearQueue,
-        reorderQueue,
-        skipToQueueIndex,
-        shuffleQueue,
-        toggleRepeatMode,
-        toggleShuffleMode,
-      }}
-    >
-      {children}
+    <AudioContext.Provider value={value}>
+      <AudioTimeContext.Provider value={time}>{children}</AudioTimeContext.Provider>
     </AudioContext.Provider>
   );
 }
@@ -574,4 +620,9 @@ export function useAudio() {
   const ctx = useContext(AudioContext);
   if (!ctx) throw new Error("useAudio must be used within an AudioProvider");
   return ctx;
+}
+
+// Position et durée du titre en cours : pour les curseurs et compteurs de temps seulement
+export function useAudioTime() {
+  return useContext(AudioTimeContext);
 }

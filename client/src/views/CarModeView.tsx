@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { useAudio } from "../context/AudioContext";
+import { useAudio, useAudioTime } from "../context/AudioContext";
 import { MediaItem } from "../types";
 import { fetchHubs, fetchAlbumDetail } from "../api";
 import {
@@ -19,14 +19,30 @@ interface CarModeViewProps {
   onPlayMedia: (item: MediaItem) => void;
 }
 
+const formatTime = (secs: number) => {
+  if (isNaN(secs)) return "0:00";
+  const m = Math.floor(secs / 60);
+  const s = Math.floor(secs % 60);
+  return `${m}:${s < 10 ? "0" : ""}${s}`;
+};
+
+// Seul composant de l'écran à suivre la position de lecture (~4 mises à jour par seconde)
+const CarClock: React.FC = () => {
+  const { currentTime, duration } = useAudioTime();
+  return (
+    <div className="flex items-center justify-center gap-2 text-xs tabular-nums text-muted mt-2">
+      <span>{formatTime(currentTime)}</span>
+      <span>/</span>
+      <span>{formatTime(duration)}</span>
+    </div>
+  );
+};
+
 export const CarModeView: React.FC<CarModeViewProps> = ({ onPlayMedia }) => {
   const {
     currentTrack,
     isPlaying,
-    currentTime,
-    duration,
     togglePlay,
-    seek,
     nextTrack,
     previousTrack,
     playTrack,
@@ -60,13 +76,6 @@ export const CarModeView: React.FC<CarModeViewProps> = ({ onPlayMedia }) => {
     } catch (e) {
       console.error(e);
     }
-  };
-
-  const formatTime = (secs: number) => {
-    if (isNaN(secs)) return "0:00";
-    const m = Math.floor(secs / 60);
-    const s = Math.floor(secs % 60);
-    return `${m}:${s < 10 ? "0" : ""}${s}`;
   };
 
   return (
@@ -133,11 +142,7 @@ export const CarModeView: React.FC<CarModeViewProps> = ({ onPlayMedia }) => {
                 <p className="text-base sm:text-lg font-medium text-muted truncate mt-1">
                   {currentTrack.grandparentTitle || currentTrack.parentTitle || "Artiste inconnu"}
                 </p>
-                <div className="flex items-center justify-center gap-2 text-xs tabular-nums text-muted mt-2">
-                  <span>{formatTime(currentTime)}</span>
-                  <span>/</span>
-                  <span>{formatTime(duration)}</span>
-                </div>
+                <CarClock />
               </div>
 
               {/* Giant Tactile Controls */}
