@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { MediaItem } from "../types";
+import { ArtistDetail, MediaItem } from "../types";
 import { fetchMusicArtists, fetchArtistDetail } from "../api";
 import { Heart, Plus, ListMusic, X } from "lucide-react";
 import { useWishlist } from "../context/WishlistContext";
@@ -10,8 +10,15 @@ import { LibraryHeader } from "../components/LibraryHeader";
 import { CollectionArt, CollectionHeader } from "../components/Collection";
 import { PlaylistArt } from "../components/PlaylistArt";
 
+// Artiste affiché et onglet Artistes / Playlists viennent de l'adresse (/musique/artiste/:id,
+// /musique/playlists) : le retour et le rechargement retrouvent le bon écran
 interface MusicViewProps {
-  initialArtist?: MediaItem | null;
+  artistId?: string;
+  artistHint?: MediaItem | null; // l'artiste cliqué : son nom s'affiche sans attendre le serveur
+  showPlaylists: boolean;
+  onSectionChange: (playlists: boolean) => void;
+  onOpenArtist: (artist: MediaItem) => void;
+  onArtistBack: () => void;
   onOpenAlbum: (albumId: string) => void;
   onOpenPlaylist?: (playlistId: string) => void;
 }
@@ -30,11 +37,16 @@ const TileGridSkeleton: React.FC<{ round?: boolean }> = ({ round }) => (
 );
 
 export const MusicView: React.FC<MusicViewProps> = ({
-  initialArtist = null,
+  artistId,
+  artistHint = null,
+  showPlaylists,
+  onSectionChange,
+  onOpenArtist,
+  onArtistBack,
   onOpenAlbum,
   onOpenPlaylist,
 }) => {
-  const [activeTab, setActiveTab] = useState<"artists" | "playlists">("artists");
+  const activeTab = showPlaylists ? "playlists" : "artists";
   const [artists, setArtists] = useState<MediaItem[]>([]);
   const [totalSize, setTotalSize] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -47,10 +59,12 @@ export const MusicView: React.FC<MusicViewProps> = ({
   const [newPlaylistTitle, setNewPlaylistTitle] = useState("");
   const [newPlaylistDesc, setNewPlaylistDesc] = useState("");
 
-  // Vue Artiste détaillée si un artiste est cliqué
-  const [selectedArtist, setSelectedArtist] = useState<MediaItem | null>(initialArtist);
-  const [artistAlbums, setArtistAlbums] = useState<MediaItem[]>([]);
+  // Vue Artiste détaillée (route /musique/artiste/:id)
+  const [artistDetail, setArtistDetail] = useState<ArtistDetail | null>(null);
   const [loadingAlbums, setLoadingAlbums] = useState(false);
+  const detail = artistDetail?.artist?.id === artistId ? artistDetail : null;
+  const selectedArtist = detail?.artist ?? (artistHint?.id === artistId ? artistHint : null);
+  const artistAlbums = detail?.albums ?? [];
 
   useEffect(() => {
     fetchMusicArtists(0, 100)
@@ -66,23 +80,17 @@ export const MusicView: React.FC<MusicViewProps> = ({
   }, []);
 
   useEffect(() => {
-    if (initialArtist) handleArtistClick(initialArtist);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const handleArtistClick = async (artist: MediaItem) => {
-    setSelectedArtist(artist);
+    if (!artistId) return;
+    let active = true;
     setLoadingAlbums(true);
-    window.scrollTo({ top: 0 });
-    try {
-      const res = await fetchArtistDetail(artist.id);
-      setArtistAlbums(res.albums);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoadingAlbums(false);
-    }
-  };
+    fetchArtistDetail(artistId)
+      .then((res) => active && setArtistDetail(res))
+      .catch((e) => console.error(e))
+      .finally(() => active && setLoadingAlbums(false));
+    return () => {
+      active = false;
+    };
+  }, [artistId]);
 
   const handleCreatePlaylist = (e: React.FormEvent) => {
     e.preventDefault();
@@ -103,20 +111,20 @@ export const MusicView: React.FC<MusicViewProps> = ({
     }
   };
 
-  // Si un artiste est sélectionné
-  if (selectedArtist) {
-    const saved = isSaved(selectedArtist.id);
+  // Si un artiste est sélectionné (son nom peut arriver après l'affichage en arrivée directe)
+  if (artistId) {
+    const saved = selectedArtist ? isSaved(selectedArtist.id) : false;
     return (
       <div className="anim-in">
         <CollectionHeader
-          onBack={() => setSelectedArtist(null)}
+          onBack={onArtistBack}
           backLabel="Tous les artistes"
-          art={<CollectionArt src={selectedArtist.thumb} round />}
+          art={<CollectionArt src={selectedArtist?.thumb ?? null} round />}
           eyebrow="Artiste"
-          title={selectedArtist.title}
+          title={selectedArtist?.title ?? "…"}
           meta={
             <span>
-              {loadingAlbums
+              {loadingAlbums || !detail
                 ? "…"
                 : `${artistAlbums.length} ${artistAlbums.length > 1 ? "albums" : "album"}`}
             </span>
@@ -127,9 +135,10 @@ export const MusicView: React.FC<MusicViewProps> = ({
           <h2 className="text-xl lg:text-[22px] font-bold tracking-[-0.02em]">Discographie</h2>
           <button
             type="button"
-            onClick={() => toggle(selectedArtist)}
+            onClick={() => selectedArtist && toggle(selectedArtist)}
+            disabled={!selectedArtist}
             aria-pressed={saved}
-            className={`press h-10 px-4 rounded-full border border-line2 hover:bg-card inline-flex items-center gap-2 text-sm font-medium ${
+            className={`press h-10 px-4 rounded-full border border-line2 hover:bg-card inline-flex items-center gap-2 text-sm font-medium disabled:opacity-50 ${
               saved ? "text-accent-text" : ""
             }`}
           >
@@ -137,7 +146,7 @@ export const MusicView: React.FC<MusicViewProps> = ({
             {saved ? "Dans ma liste" : "Ma liste"}
           </button>
         </div>
-        {loadingAlbums ? (
+        {loadingAlbums || !detail ? (
           <TileGridSkeleton />
         ) : (
           <div className={`${TILE_GRID} anim-in`}>
@@ -178,7 +187,7 @@ export const MusicView: React.FC<MusicViewProps> = ({
             { id: "playlists", label: "Playlists", count: playlists.length },
           ]}
           value={activeTab}
-          onChange={(tab) => setActiveTab(tab)}
+          onChange={(tab) => onSectionChange(tab === "playlists")}
         />
 
         {activeTab === "playlists" && (
@@ -276,7 +285,7 @@ export const MusicView: React.FC<MusicViewProps> = ({
                   title={artist.title}
                   sub="Artiste"
                   round
-                  onClick={() => handleArtistClick(artist)}
+                  onClick={() => onOpenArtist(artist)}
                 />
               ))}
             </div>

@@ -6,13 +6,14 @@ import { LibraryHeader, POSTER_GRID, PosterGridSkeleton } from "../components/Li
 
 interface ShowsViewProps {
   onOpenShow: (showId: string) => void;
+  sort: string; // dans l'adresse (?tri=) : conservé au retour d'une fiche
+  onSortChange: (sort: string) => void;
 }
 
-export const ShowsView: React.FC<ShowsViewProps> = ({ onOpenShow }) => {
+export const ShowsView: React.FC<ShowsViewProps> = ({ onOpenShow, sort, onSortChange }) => {
   const [shows, setShows] = useState<MediaItem[]>([]);
   const [totalSize, setTotalSize] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [sort, setSort] = useState("titleSort:asc");
 
   useEffect(() => {
     setLoading(true);
@@ -34,7 +35,7 @@ export const ShowsView: React.FC<ShowsViewProps> = ({ onOpenShow }) => {
         title="Séries"
         subtitle={loading ? "Chargement…" : `${totalSize} séries disponibles`}
         sort={sort}
-        onSortChange={setSort}
+        onSortChange={onSortChange}
       />
 
       {loading ? (
