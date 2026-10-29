@@ -62,7 +62,7 @@ jobs:
           cache-dependency-path: server/package-lock.json
       - run: npm ci
       - name: Vérification de syntaxe
-        run: for f in *.js; do node --check "$f"; done
+        run: for f in *.js routes/*.js; do node --check "$f"; done
       - run: npm test
 
   automerge:
