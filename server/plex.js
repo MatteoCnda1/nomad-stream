@@ -133,6 +133,15 @@ export function formatMediaItem(item) {
   };
 }
 
+// Élément d'une liste (grille de films, de séries, d'artistes, d'albums) : sans les textes que
+// seules les fiches affichent. Les biographies d'artistes faisaient 84 % du poids de la liste
+// des artistes (138 Ko gzip pour 100 artistes en 4G).
+export function formatListItem(item) {
+  const formatted = formatMediaItem(item);
+  if (!formatted) return null;
+  return { ...formatted, summary: "", tagline: undefined, roles: [], directors: [] };
+}
+
 // Piste mise en forme, avec son lien de flux audio
 export function formatTrack(item) {
   const track = formatMediaItem(item);
