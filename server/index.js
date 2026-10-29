@@ -12,6 +12,7 @@ import { createTranscoder } from "./transcoder.js";
 import { createOffline } from "./offline.js";
 import { createAuth } from "./auth.js";
 import { createImageCache } from "./image-cache.js";
+import { createImageGuard, isConnectionDrop } from "./image-guard.js";
 
 dotenv.config();
 
@@ -90,7 +91,8 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 // fetch vers Plex avec délai maximal avant réception des en-têtes et nouvelles tentatives
 // (micro-coupure Tailscale, erreur 5xx). Le délai ne s'applique pas au corps de la réponse :
 // un flux peut durer des heures. Si `signal` est annulé (client parti), le corps est coupé aussi.
-async function fetchPlex(url, { method = "GET", headers = {}, timeoutMs = 20000, retries = 0, signal } = {}) {
+// `retryIf(erreur)` écarte les erreurs après lesquelles il ne faut pas réessayer.
+async function fetchPlex(url, { method = "GET", headers = {}, timeoutMs = 20000, retries = 0, retryIf = () => true, signal } = {}) {
   let lastError;
   for (let attempt = 0; attempt <= retries; attempt++) {
     if (signal?.aborted) throw new Error("Client déconnecté");
@@ -106,7 +108,7 @@ async function fetchPlex(url, { method = "GET", headers = {}, timeoutMs = 20000,
     } catch (error) {
       clearTimeout(timer);
       lastError = error;
-      if (signal?.aborted) throw error;
+      if (signal?.aborted || !retryIf(error)) throw error;
     }
     if (attempt < retries) await sleep(400 * (attempt + 1));
   }
@@ -132,6 +134,21 @@ const IMAGE_CACHE_DIR = process.env.NOMAD_IMAGE_CACHE_DIR || path.join(CACHE_DIR
 const imageCache = createImageCache({
   dir: IMAGE_CACHE_DIR,
   maxBytes: (Number(process.env.NOMAD_IMAGE_CACHE_MB) || 500) * 1024 ** 2,
+});
+// Images qui ont fait planter le transcodeur photo de Plex (hors du dossier des vignettes, que
+// le ménage du cache vide) et nombre de transcodages photo simultanés
+const imageGuard = createImageGuard({
+  file: path.join(CACHE_DIR, "plex-crash-images.json"),
+  concurrency: Number(process.env.NOMAD_IMAGE_CONCURRENCY) || 4,
+  // Plex répond-il encore ? N'importe quelle réponse HTTP suffit
+  isPlexUp: () =>
+    fetchPlex(plexUrl("/identity"), { timeoutMs: 3000 }).then(
+      (r) => {
+        r.body?.cancel().catch(() => {});
+        return true;
+      },
+      () => false,
+    ),
 });
 
 // -------------------------------------------------------------
@@ -873,30 +890,45 @@ app.get("/api/image", async (req, res) => {
     return fs.createReadStream(cachedFilePath).pipe(res);
   }
 
-  const get = (url) =>
-    fetchPlex(url, { timeoutMs: PLEX_TIMEOUT_MS, retries: 1, signal: AbortSignal.timeout(PLEX_TIMEOUT_MS * 2) });
+  const get = (url, options) =>
+    fetchPlex(url, { timeoutMs: PLEX_TIMEOUT_MS, retries: 1, signal: AbortSignal.timeout(PLEX_TIMEOUT_MS * 2), ...options });
+  const read = async (upstream) => ({
+    buffer: Buffer.from(await upstream.arrayBuffer()),
+    type: upstream.headers.get("content-type"),
+  });
   try {
-    // 2. Transcodage ultra-léger via le photo transcoder de Plex
-    const innerUrl = `${imagePath}?X-Plex-Token=${PLEX_TOKEN}`;
-    let upstream = await get(plexUrl("/photo/:/transcode", { width, height, minSize: "1", upscale: "1", format, url: innerUrl }));
+    // 2. Transcodage ultra-léger via le photo transcoder de Plex, sauf si l'image l'a déjà fait planter
+    let image = null;
     let cacheControl = "public, max-age=2592000, immutable"; // Cache 30 jours
-    if (!upstream.ok) {
-      // Repli sur l'image brute si le photo transcoder échoue
-      upstream.body?.cancel().catch(() => {});
-      upstream = await get(plexUrl(imagePath));
+    if (!imageGuard.isSuspect(imagePath)) {
+      const innerUrl = `${imagePath}?X-Plex-Token=${PLEX_TOKEN}`;
+      const transcodeUrl = plexUrl("/photo/:/transcode", { width, height, minSize: "1", upscale: "1", format, url: innerUrl });
+      image = await imageGuard.transcode(imagePath, async () => {
+        // Jamais de nouvelle tentative après une coupure : si Plex vient de tomber sur cette
+        // image, la lui redemander le referait planter
+        const upstream = await get(transcodeUrl, { retryIf: (err) => !isConnectionDrop(err) });
+        if (upstream.ok) return read(upstream);
+        upstream.body?.cancel().catch(() => {});
+        return null;
+      });
+    }
+    if (!image) {
+      // Repli sur l'image brute si le photo transcoder échoue (ou a planté sur cette image)
+      const upstream = await get(plexUrl(imagePath));
       if (!upstream.ok) {
         upstream.body?.cancel().catch(() => {});
         return res.status(upstream.status === 404 ? 404 : 502).send("Image introuvable");
       }
+      image = await read(upstream);
       cacheControl = "public, max-age=604800";
     }
-    const buffer = Buffer.from(await upstream.arrayBuffer());
+    const { buffer } = image;
     // Sauvegarde sur disque asynchrone
     fs.promises
       .writeFile(cachedFilePath, buffer)
       .then(() => imageCache.noteWrite())
       .catch((err) => console.error("Cache file write error:", err));
-    res.setHeader("Content-Type", upstream.headers.get("content-type") || IMAGE_FORMATS[format]);
+    res.setHeader("Content-Type", image.type || IMAGE_FORMATS[format]);
     res.setHeader("Cache-Control", cacheControl);
     res.setHeader("ETag", etag);
     res.send(buffer);

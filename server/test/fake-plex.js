@@ -39,17 +39,36 @@ function respond(url, res) {
 
 export async function startFakePlex() {
   const requests = [];
+  const transcoded = []; // images demandées au transcodeur photo
+  const transcodes = { active: 0, peak: 0 }; // transcodages photo simultanés
   const behaviors = new Map();
+  let down = false;
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, "http://plex");
     requests.push(url.pathname);
-    const b = behaviors.get(url.pathname);
+    const inner = url.pathname === "/photo/:/transcode" ? url.searchParams.get("url")?.split("?")[0] : null;
+    if (inner) transcoded.push(inner);
+    if (down) return req.socket.destroy(); // planté : connexions coupées jusqu'à restart()
+    const b = behaviors.get(`transcode ${inner}`) ?? behaviors.get(url.pathname);
+    if (b?.crash) {
+      down = true;
+      return req.socket.destroy();
+    }
+    if (b?.drop > 0) {
+      b.drop--;
+      return req.socket.destroy();
+    }
     if (b?.hang) return; // ne répond jamais
     if (b?.fail > 0) {
       b.fail--;
       res.writeHead(500);
       return res.end();
     }
+    if (inner) {
+      transcodes.peak = Math.max(transcodes.peak, ++transcodes.active);
+      res.on("close", () => transcodes.active--);
+    }
+    if (b?.delayMs) return setTimeout(() => respond(url, res), b.delayMs);
     respond(url, res);
   });
   await new Promise((r) => server.listen(0, "127.0.0.1", r));
@@ -57,8 +76,15 @@ export async function startFakePlex() {
     url: `http://127.0.0.1:${server.address().port}`,
     image: IMAGE,
     requests,
-    // { fail: n } : n réponses 500 avant de répondre normalement ; { hang: true } : jamais de réponse
+    transcoded,
+    transcodes,
+    // { fail: n } : n réponses 500 avant de répondre normalement ; { hang: true } : jamais de réponse ;
+    // { drop: n } : n connexions coupées sans réponse ; { delayMs } : réponse retardée
     behave: (pathname, behavior) => behaviors.set(pathname, behavior),
+    // Comportement du transcodeur photo pour une image donnée ; { crash: true } : Plex plante
+    // (toutes les connexions coupées) chaque fois qu'on lui demande cette image
+    onTranscode: (imagePath, behavior) => behaviors.set(`transcode ${imagePath}`, behavior),
+    restart: () => (down = false),
     close: () => {
       server.closeAllConnections();
       server.close();

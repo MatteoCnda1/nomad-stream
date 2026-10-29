@@ -12,10 +12,13 @@ let plex;
 let gw;
 let cacheDir;
 
+const launchGateway = () =>
+  launch({ PLEX_URL: plex.url, NOMAD_CACHE_DIR: cacheDir, PLEX_TIMEOUT_MS: "300", NOMAD_IMAGE_CONCURRENCY: "2" });
+
 before(async () => {
   plex = await startFakePlex();
   cacheDir = mkdtempSync(path.join(tmpdir(), "nomad-cache-"));
-  gw = await launch({ PLEX_URL: plex.url, NOMAD_CACHE_DIR: cacheDir, PLEX_TIMEOUT_MS: "300" });
+  gw = await launchGateway();
 });
 
 after(() => {
@@ -139,5 +142,56 @@ describe("sécurité : chemins refusés", () => {
 
   test("sous-chemin de session HLS", async () => {
     await refused("/api/stream/hls/session/abc/..%2F..%2F..%2F..%2F..%2F%3A%2Fprefs", "/:/prefs");
+  });
+});
+
+// Une pochette faisait planter le transcodeur photo de Plex, et chaque affichage de la page
+// Musique la redemandait : Plex replantait en boucle
+describe("images qui font planter Plex", () => {
+  const image = (p, size = 300) => `/api/image?path=${encodeURIComponent(p)}&width=${size}&height=${size}`;
+  const transcodes = (p) => plex.transcoded.filter((t) => t === p).length;
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  test("mise de côté dès le premier plantage, servie brute ensuite, même après redémarrage", async () => {
+    const poison = "/library/metadata/30/thumb/1700000000";
+    plex.onTranscode(poison, { crash: true });
+    const first = await get(image(poison));
+    assert.equal(first.status, 502);
+    assert.equal(transcodes(poison), 1, "pas de nouvelle tentative juste après le plantage");
+
+    plex.restart();
+    const second = await get(image(poison));
+    assert.equal(second.status, 200);
+    assert.equal(second.headers.get("content-type"), "image/jpeg", "image brute");
+    assert.equal(transcodes(poison), 1);
+
+    await wait(200); // écriture asynchrone de la liste
+    gw.stop();
+    gw = await launchGateway();
+    const other = await get(image(poison, 301)); // autre taille : absente du cache disque
+    assert.equal(other.status, 200);
+    assert.equal(transcodes(poison), 1, "liste conservée au redémarrage de la passerelle");
+  });
+
+  test("simple coupure, Plex toujours là : nouvelle tentative, image pas mise de côté", async () => {
+    const p = "/library/metadata/31/thumb/1700000000";
+    plex.onTranscode(p, { drop: 1 });
+    const res = await get(image(p));
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get("content-type"), "image/webp");
+    assert.equal(transcodes(p), 2);
+    const again = await get(image(p, 301));
+    assert.equal(again.headers.get("content-type"), "image/webp");
+    assert.equal(transcodes(p), 3);
+  });
+
+  test("transcodages simultanés plafonnés", async () => {
+    plex.behave("/photo/:/transcode", { delayMs: 100 });
+    plex.transcodes.peak = 0;
+    const paths = Array.from({ length: 6 }, (_, i) => `/library/metadata/${40 + i}/thumb/1700000000`);
+    const results = await Promise.all(paths.map((p) => get(image(p))));
+    plex.behave("/photo/:/transcode", {});
+    assert.deepEqual(results.map((r) => r.status), Array(6).fill(200));
+    assert.equal(plex.transcodes.peak, 2);
   });
 });
