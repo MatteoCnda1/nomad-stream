@@ -50,6 +50,14 @@ describe("métadonnées", () => {
     assert.equal(items[0].partKey, "/library/parts/11/file.mp4");
   });
 
+  test("listes allégées : les résumés restent dans les fiches", async () => {
+    const { items } = await (await get("/api/movies?limit=8")).json();
+    assert.equal(items[0].summary, "");
+    assert.deepEqual(items[0].roles, []);
+    const detail = await (await get("/api/metadata/1")).json();
+    assert.match(detail.summary, /^Résumé de Alpha/);
+  });
+
   test("une erreur 500 passagère de Plex est rattrapée par une nouvelle tentative", async () => {
     plex.behave("/library/sections/1/all", { fail: 1 });
     const before = count("/library/sections/1/all");

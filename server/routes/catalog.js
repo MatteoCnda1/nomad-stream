@@ -1,7 +1,7 @@
 // Catalogue : statut, accueil, listes (films, séries, artistes), fiches détaillées et rapport
 // de progression (scrobble). La recherche est dans routes/search.js.
 import express from "express";
-import { SECTIONS, PLEX_WEB_PROFILE, plexClientId, fetchPlex, formatMediaItem, formatTrack } from "../plex.js";
+import { SECTIONS, PLEX_WEB_PROFILE, plexClientId, fetchPlex, formatMediaItem, formatListItem, formatTrack } from "../plex.js";
 import { isNumericId } from "../validate.js";
 
 export function catalogRoutes({ plex, cache }) {
@@ -21,7 +21,7 @@ export function catalogRoutes({ plex, cache }) {
     try {
       const data = await plexFetch(`/library/sections/${section}/all?sort=${encodeURIComponent(sort)}&X-Plex-Container-Start=${offset}&X-Plex-Container-Size=${limit}`);
       const totalSize = data.MediaContainer?.totalSize || 0;
-      const items = (data.MediaContainer?.Metadata || []).map(formatMediaItem);
+      const items = (data.MediaContainer?.Metadata || []).map(formatListItem);
 
       const result = {
         items,
@@ -150,7 +150,7 @@ export function catalogRoutes({ plex, cache }) {
       ]);
 
       const artist = formatMediaItem(artistData.MediaContainer?.Metadata?.[0]);
-      const albums = (albumsData.MediaContainer?.Metadata || []).map(formatMediaItem);
+      const albums = (albumsData.MediaContainer?.Metadata || []).map(formatListItem);
 
       const result = {
         artist,

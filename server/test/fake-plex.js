@@ -7,6 +7,7 @@ const movie = (id, title) => ({
   key: `/library/metadata/${id}`,
   type: "movie",
   title,
+  summary: `Résumé de ${title}, que seule la fiche affiche.`,
   year: 2020,
   duration: 6_000_000,
   thumb: `/library/metadata/${id}/thumb/1700000000`,
