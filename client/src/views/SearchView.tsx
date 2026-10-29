@@ -260,6 +260,8 @@ export const SearchView: React.FC<SearchViewProps> = ({
         </div>
       )}
 
+      {query.trim() && <h1 className="sr-only">Résultats pour « {query.trim()} »</h1>}
+
       {/* Filtres */}
       {results && query.trim() && hasAnyResults && (
         <Pills

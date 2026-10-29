@@ -199,6 +199,7 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
         <div
           role="dialog"
           aria-modal="true"
+          aria-labelledby="edit-playlist-title"
           className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 anim-in"
           onClick={() => setIsEditing(false)}
         >
@@ -207,10 +208,11 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between pb-3 border-b border-line">
-              <h3 className="text-lg font-bold">Modifier la playlist</h3>
+              <h2 id="edit-playlist-title" className="text-lg font-bold">Modifier la playlist</h2>
               <button
                 type="button"
                 onClick={() => setIsEditing(false)}
+                aria-label="Fermer"
                 className="press w-8 h-8 rounded-full grid place-items-center text-muted hover:text-fg"
               >
                 <X className="w-5 h-5" />
@@ -267,6 +269,8 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
         <div
           role="alertdialog"
           aria-modal="true"
+          aria-labelledby="delete-playlist-title"
+          aria-describedby="delete-playlist-desc"
           className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 anim-in"
           onClick={() => setConfirmDelete(false)}
         >
@@ -274,8 +278,8 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
             className="w-full max-w-sm rounded-3xl bg-surface p-6 border border-line shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
-            <h3 className="text-lg font-bold text-fg">Supprimer la playlist ?</h3>
-            <p className="mt-2 text-sm text-muted">
+            <h2 id="delete-playlist-title" className="text-lg font-bold text-fg">Supprimer la playlist ?</h2>
+            <p id="delete-playlist-desc" className="mt-2 text-sm text-muted">
               Êtes-vous sûr de vouloir supprimer « {playlist.title} » ? Cette action est
               irréversible.
             </p>

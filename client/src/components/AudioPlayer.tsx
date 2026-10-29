@@ -375,7 +375,7 @@ export const AudioPlayer: React.FC = () => {
                   className="w-10 h-10 rounded-lg object-cover bg-surface2"
                 />
                 <div className="flex-1 min-w-0">
-                  <div className="text-[11px] font-bold text-accent uppercase tracking-wider">
+                  <div className="text-[11px] font-bold text-accent-text uppercase tracking-wider">
                     En cours de lecture
                   </div>
                   <div className="text-sm font-semibold truncate">{currentTrack.title}</div>
@@ -501,7 +501,12 @@ export const AudioPlayer: React.FC = () => {
 
       {/* LECTEUR PLEIN ÉCRAN */}
       {isExpanded && (
-        <div className="fixed inset-0 z-50 bg-bg overflow-y-auto no-scrollbar anim-in select-none">
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Lecteur"
+          className="fixed inset-0 z-50 bg-bg overflow-y-auto no-scrollbar anim-in select-none"
+        >
           {/* Lumière d'ambiance tirée de la pochette */}
           <div className="pointer-events-none fixed inset-0 overflow-hidden" aria-hidden="true">
             <img
@@ -710,7 +715,7 @@ export const AudioPlayer: React.FC = () => {
                       <button
                         type="button"
                         onClick={() => setFullscreenTab("queue")}
-                        className="text-xs font-semibold text-accent hover:underline"
+                        className="text-xs font-semibold text-accent-text hover:underline"
                       >
                         Voir tout
                       </button>
@@ -794,7 +799,7 @@ export const AudioPlayer: React.FC = () => {
                     className="w-12 h-12 rounded-xl object-cover bg-surface2"
                   />
                   <div className="flex-1 min-w-0">
-                    <span className="text-[11px] font-bold text-accent uppercase tracking-wider block">
+                    <span className="text-[11px] font-bold text-accent-text uppercase tracking-wider block">
                       En cours de lecture
                     </span>
                     <span className="text-[15px] font-semibold truncate block">

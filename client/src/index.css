@@ -37,7 +37,7 @@
   --faint: 107 108 116;
   --accent-hover: 200 15 24;
   --accent-text: 207 15 25;
-  --ok: 23 134 74;
+  --ok: 20 118 64;
   --line: rgba(12, 12, 18, 0.08);
   --line2: rgba(12, 12, 18, 0.14);
   --accent-soft: rgba(229, 19, 29, 0.09);
@@ -69,6 +69,25 @@
   :focus-visible {
     outline: 2px solid rgb(var(--accent));
     outline-offset: 2px;
+  }
+  /* Champs : focus toujours visible au clavier (plus spécifique que l'utilitaire outline-none) */
+  input:focus-visible,
+  select:focus-visible,
+  textarea:focus-visible {
+    outline: 2px solid rgb(var(--accent));
+    outline-offset: 1px;
+  }
+  /* Zoom au pincement permis, mais pas de zoom au double appui (double appui = ±10 s dans le
+     lecteur vidéo) ; iOS zoome sur un champ en dessous de 16 px : on les y met sur écran tactile */
+  html {
+    touch-action: manipulation;
+  }
+  @media (pointer: coarse) {
+    input,
+    select,
+    textarea {
+      font-size: max(16px, 1em) !important;
+    }
   }
   /* Les champs de recherche ont leur propre bouton « Effacer » */
   input[type="search"]::-webkit-search-cancel-button {
@@ -154,9 +173,17 @@
   transition: opacity 0.3s ease, transform 0.35s cubic-bezier(0.2, 0.7, 0.2, 1);
 }
 .tile:hover .fab,
-.tile:focus-visible .fab {
+.tile:focus-visible .fab,
+.tile:focus-within .fab {
   opacity: 1;
   transform: none;
+}
+/* Écran tactile (pas de survol) : un bouton d'action réel reste visible */
+@media (hover: none) {
+  .tile .fab.fab-action {
+    opacity: 1;
+    transform: none;
+  }
 }
 
 .press {

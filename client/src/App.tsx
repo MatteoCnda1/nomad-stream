@@ -18,6 +18,7 @@ import { AlbumDetailView } from "./views/AlbumDetailView";
 import { PlaylistDetailView } from "./views/PlaylistDetailView";
 import { PlaylistModal } from "./components/PlaylistModal";
 import { GlobalToast } from "./components/GlobalToast";
+import { InstallPrompt } from "./components/InstallPrompt";
 import { PlaylistProvider, usePlaylist } from "./context/PlaylistContext";
 import { SearchView } from "./views/SearchView";
 import { CarModeView } from "./views/CarModeView";
@@ -327,6 +328,9 @@ const Shell: React.FC = () => {
 
       {/* Notifications toast globales */}
       <GlobalToast />
+
+      {/* Invite d'installation (une fois, hors appli installée et hors lecture vidéo) */}
+      {!activeVideoMedia && !launchingItem && <InstallPrompt />}
     </div>
   );
 };

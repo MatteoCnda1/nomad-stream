@@ -88,6 +88,8 @@ Créer une application **PWA (Progressive Web App)** connectée à **Plex Media 
    * `AudioPlayer` : Mini lecteur flottant et modal plein écran avec synchronisation `navigator.mediaSession` (CarPlay / commandes au volant).
    * **Lecture continue** (#24, `server/radio.js`, `GET /api/music/radio`) : sans répétition (réglage par défaut), la fin de la file enchaîne sur 20 titres proches du dernier (artistes que Plex dit similaires, même genre, même artiste, un peu de hasard ; jamais le même morceau ni deux fois le même artiste d'affilée), ajoutés dès que le dernier titre commence et marqués « Lecture continue » dans la file. Les titres ajoutés à la main passent devant. Répétition : désactivée → toute la file → ce titre.
    * PWA Manifest & Service Worker avec icônes multi-résolutions.
+   * **Installation (#9)** : écrans de démarrage iOS (`client/public/splash/`, 22 tailles × 2 orientations, régénérés par `scripts/make-splash.mjs`) et invite d'installation proposée une fois après 8 s (vraie invite du navigateur sur Android/Chrome, marche à suivre Partager › « Sur l'écran d'accueil » sur iOS ; refusée, elle revient au bout de 30 jours ; toujours dans Compte › Application).
+   * **Accessibilité (#11)** : zoom au pincement autorisé (`touch-action: manipulation` contre le zoom au double appui, champs en 16 px sur écran tactile contre le zoom automatique d'iOS), audit axe-core sans violation sur les écrans principaux (contrastes, noms des boutons et des modales, titres h1).
 
 ---
 

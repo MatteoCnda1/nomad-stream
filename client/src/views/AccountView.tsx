@@ -5,6 +5,8 @@ import { useTheme, ThemeMode } from "../context/ThemeContext";
 import { useWishlist } from "../context/WishlistContext";
 import { clearApiCache } from "../api";
 import { Avatar, Sk, ThemeToggle } from "../components/ui";
+import { useInstall } from "../hooks/useInstall";
+import { IOSInstallSteps } from "../components/InstallPrompt";
 
 interface AccountViewProps {
   onNavigate: (tab: string) => void;
@@ -44,6 +46,7 @@ const Row: React.FC<{ title: string; hint?: string; children?: React.ReactNode; 
 export const AccountView: React.FC<AccountViewProps> = ({ onNavigate }) => {
   const { serverName, isOnline, plexUrl, version, loaded } = useServerStatus();
   const { mode, setMode } = useTheme();
+  const install = useInstall();
   const { entries } = useWishlist();
   const [cacheCleared, setCacheCleared] = useState(false);
 
@@ -176,6 +179,21 @@ export const AccountView: React.FC<AccountViewProps> = ({ onNavigate }) => {
           <Card labelledBy="pref-h" className="col-span-12 xl:col-span-7">
             <h2 id="pref-h" className="text-lg font-semibold">Préférences</h2>
             <div className="mt-2">
+              {(install.canPrompt || install.ios) && (
+                <Row title="Application" hint="Plein écran, depuis l'écran d'accueil">
+                  {install.canPrompt ? (
+                    <button
+                      type="button"
+                      onClick={() => install.prompt()}
+                      className="press h-10 px-4 rounded-full bg-accent hover:bg-accent-hover text-white text-sm font-semibold"
+                    >
+                      Installer
+                    </button>
+                  ) : (
+                    <IOSInstallSteps />
+                  )}
+                </Row>
+              )}
               <Row title="Thème" hint="Enregistré sur cet appareil" last>
                 <div role="radiogroup" aria-label="Thème" className="flex p-1 rounded-[14px] bg-panel">
                   {THEME_OPTIONS.map((o) => (
