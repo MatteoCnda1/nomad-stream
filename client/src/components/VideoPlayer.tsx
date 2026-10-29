@@ -129,6 +129,19 @@ export const PlayerLoadingScreen: React.FC<{ item: MediaItem; status: string; on
   </div>
 );
 
+// Aide affichée par la touche « ? »
+const SHORTCUTS: [string, string][] = [
+  ["Espace · K", "Lecture / pause"],
+  ["← · J", "Reculer de 10 s"],
+  ["→ · L", "Avancer de 10 s"],
+  ["↑ · ↓", "Volume"],
+  ["M", "Couper le son"],
+  ["F", "Plein écran"],
+  ["C", "Sous-titres"],
+  ["0 … 9", "Aller à 0 %, 10 %… 90 %"],
+  ["Échap", "Fermer le lecteur"],
+];
+
 export const VideoPlayer: React.FC<VideoPlayerProps> = ({ media, localSrc, onClose }) => {
   const { pauseTrack } = useAudio();
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -147,6 +160,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ media, localSrc, onClo
   const [status, setStatus] = useState("Préparation de la lecture…");
   const [errorText, setErrorText] = useState("");
   const [toast, setToast] = useState<string | null>(null);
+  // Retour visuel bref d'un raccourci clavier (« +10 s », « Volume 60 % »), et aide (touche ?)
+  const [flash, setFlash] = useState<string | null>(null);
+  const [showHelp, setShowHelp] = useState(false);
   const [active, setActive] = useState<Active | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const isPlayingRef = useRef(false);
@@ -788,6 +804,111 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ media, localSrc, onClo
     }
   };
 
+  // --- Raccourcis clavier (ordinateur) ---
+
+  const flashTimeoutRef = useRef<number | null>(null);
+  const showFlash = (text: string) => {
+    setFlash(text);
+    if (flashTimeoutRef.current) clearTimeout(flashTimeoutRef.current);
+    flashTimeoutRef.current = window.setTimeout(() => setFlash(null), 900);
+  };
+
+  // Piste rétablie par C : la dernière choisie, sinon celle par défaut, sinon la première
+  const lastSubtitleRef = useRef<number | null>(defaultSubtitleId ?? media.subtitleStreams[0]?.id ?? null);
+
+  const onShortcut = (e: KeyboardEvent) => {
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    const target = e.target as HTMLElement | null;
+    const tag = target?.tagName;
+    const onRange = tag === "INPUT" && (target as HTMLInputElement).type === "range";
+    if (target?.isContentEditable || tag === "TEXTAREA" || tag === "SELECT" || (tag === "INPUT" && !onRange)) return;
+    // Menu de pistes ou aide ouverts : Échap les ferme, le reste se fait au clavier dans le menu
+    if (menu || showHelp) {
+      if (e.key === "Escape" || (showHelp && e.key === "?")) {
+        e.preventDefault();
+        setMenu(null);
+        setShowHelp(false);
+      }
+      return;
+    }
+    const onControl = tag === "BUTTON" || tag === "A";
+    const video = videoRef.current;
+    const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+    switch (key) {
+      case " ":
+        if (onControl) return; // le bouton qui a le focus s'en charge
+        togglePlay();
+        break;
+      case "k":
+        togglePlay();
+        break;
+      case "ArrowLeft":
+      case "ArrowRight":
+      case "j":
+      case "l": {
+        if (onRange && key.startsWith("Arrow")) return; // la barre de lecture avance seconde par seconde
+        const back = key === "ArrowLeft" || key === "j";
+        skip(back ? -10 : 10);
+        showFlash(back ? "−10 s" : "+10 s");
+        break;
+      }
+      case "ArrowUp":
+      case "ArrowDown":
+        if (!video || onRange) return;
+        video.muted = false;
+        video.volume = Math.round(Math.min(1, Math.max(0, video.volume + (key === "ArrowUp" ? 0.1 : -0.1))) * 10) / 10;
+        showFlash(`Volume ${Math.round(video.volume * 100)} %`);
+        break;
+      case "m":
+        if (!video) return;
+        video.muted = !video.muted;
+        showFlash(video.muted ? "Son coupé" : "Son rétabli");
+        break;
+      case "f":
+        toggleFullscreen();
+        break;
+      case "c": {
+        if (!media.subtitleStreams.length) return;
+        if (selectedSubtitle != null) lastSubtitleRef.current = selectedSubtitle;
+        const next = selectedSubtitle == null ? lastSubtitleRef.current : null;
+        chooseTrack("subtitles", next);
+        showFlash(next == null ? "Sous-titres désactivés" : "Sous-titres activés");
+        break;
+      }
+      case "?":
+        setShowHelp(true);
+        break;
+      case "Escape":
+        if (document.fullscreenElement) return; // le navigateur quitte d'abord le plein écran
+        onClose();
+        break;
+      default:
+        // 0 à 9 : début, 10 %, 20 %… de la vidéo
+        if (!/^[0-9]$/.test(key) || !duration) return;
+        seekTo((duration * Number(key)) / 10);
+        showFlash(`${Number(key) * 10} %`);
+    }
+    e.preventDefault();
+    resetControlsTimeout();
+  };
+
+  const shortcutRef = useRef(onShortcut);
+  shortcutRef.current = onShortcut;
+  useEffect(() => {
+    // Le focus quitte la page derrière (le bouton « Regarder » resté focalisé recevait Espace)
+    containerRef.current?.focus({ preventScroll: true });
+    const onKey = (e: KeyboardEvent) => shortcutRef.current(e);
+    // Plein écran quitté par Échap ou par le navigateur : l'icône du bouton suit
+    const onFullscreen = () => setIsFullscreen(!!document.fullscreenElement);
+    window.addEventListener("keydown", onKey);
+    document.addEventListener("fullscreenchange", onFullscreen);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.removeEventListener("fullscreenchange", onFullscreen);
+      if (flashTimeoutRef.current) clearTimeout(flashTimeoutRef.current);
+    };
+  }, []);
+
   const togglePiP = async () => {
     if (!videoRef.current) return;
     try {
@@ -900,9 +1021,13 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ media, localSrc, onClo
   return (
     <div
       ref={containerRef}
+      tabIndex={-1}
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Lecture : ${media.title}`}
       onMouseMove={resetControlsTimeout}
       onTouchEnd={handleTouchEnd}
-      className="fixed inset-0 z-50 bg-black flex items-center justify-center select-none overflow-hidden text-white"
+      className="fixed inset-0 z-50 bg-black flex items-center justify-center select-none overflow-hidden text-white outline-none"
     >
       {/* Lecteur Vidéo HTML5 */}
       <video
@@ -980,6 +1105,47 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ media, localSrc, onClo
       )}
 
       {/* NOTIFICATION (baisse de qualité automatique) */}
+      {/* Raccourci clavier : retour visuel, lu aussi par les lecteurs d'écran */}
+      <div
+        role="status"
+        aria-live="polite"
+        className={`pointer-events-none fixed z-[60] left-1/2 -translate-x-1/2 top-[22%] px-5 py-2.5 rounded-2xl bg-black/70 text-lg font-semibold tabular-nums transition-opacity ${
+          flash ? "opacity-100" : "opacity-0"
+        }`}
+      >
+        {flash}
+      </div>
+
+      {/* Aide des raccourcis (touche ?) */}
+      {showHelp && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="shortcuts-title"
+          className="fixed inset-0 z-[70] bg-black/70 grid place-items-center p-4"
+          onClick={() => setShowHelp(false)}
+        >
+          <div className="w-full max-w-sm rounded-3xl bg-[#1c1c21] p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <h2 id="shortcuts-title" className="text-lg font-bold">Raccourcis clavier</h2>
+            <dl className="mt-4 grid grid-cols-[auto_1fr] gap-x-5 gap-y-2.5 text-sm">
+              {SHORTCUTS.map(([keys, label]) => (
+                <React.Fragment key={label}>
+                  <dt className="font-mono text-white/90 whitespace-nowrap">{keys}</dt>
+                  <dd className="text-white/70">{label}</dd>
+                </React.Fragment>
+              ))}
+            </dl>
+            <button
+              type="button"
+              onClick={() => setShowHelp(false)}
+              className="mt-6 h-10 px-5 rounded-full bg-white/10 hover:bg-white/20 text-sm font-semibold"
+            >
+              Fermer
+            </button>
+          </div>
+        </div>
+      )}
+
       {toast && (
         <div role="status" className="fixed z-[60] left-1/2 -translate-x-1/2 top-[max(76px,calc(env(safe-area-inset-top)+60px))] px-4 py-2.5 rounded-2xl bg-[#1c1c21]/95 text-sm shadow-lg flex items-center gap-2.5">
           <Gauge className="w-4 h-4 text-[#ff4d55]" />
@@ -1104,6 +1270,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ media, localSrc, onClo
             onClick={() => skip(-10)}
             className="p-4 rounded-full bg-white/10 hover:bg-white/20 transition active:scale-90"
             aria-label="Reculer de 10 secondes"
+            aria-keyshortcuts="ArrowLeft J"
+            title="Reculer de 10 secondes (←)"
           >
             <RotateCcw className="w-8 h-8" />
           </button>
@@ -1111,6 +1279,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ media, localSrc, onClo
           <button
             onClick={togglePlay}
             aria-label={isPlaying ? "Pause" : "Lecture"}
+            aria-keyshortcuts="Space K"
+            title={`${isPlaying ? "Pause" : "Lecture"} (espace)`}
             className="p-6 rounded-full bg-[#e5131d] hover:bg-[#f52a33] shadow-[0_18px_36px_-12px_rgba(229,19,29,.7)] transition active:scale-90"
           >
             {isPlaying ? <Pause className="w-10 h-10 fill-current" /> : <Play className="w-10 h-10 fill-current ml-1" />}
@@ -1120,6 +1290,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ media, localSrc, onClo
             onClick={() => skip(10)}
             className="p-4 rounded-full bg-white/10 hover:bg-white/20 transition active:scale-90"
             aria-label="Avancer de 10 secondes"
+            aria-keyshortcuts="ArrowRight L"
+            title="Avancer de 10 secondes (→)"
           >
             <RotateCw className="w-8 h-8" />
           </button>
@@ -1151,6 +1323,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ media, localSrc, onClo
             <button
               onClick={toggleFullscreen}
               aria-label={isFullscreen ? "Quitter le plein écran" : "Plein écran"}
+              aria-keyshortcuts="F"
+              title={`${isFullscreen ? "Quitter le plein écran" : "Plein écran"} (F)`}
               className="p-2 hover:text-white/80 transition active:scale-95"
             >
               {isFullscreen ? <Minimize2 className="w-5 h-5" /> : <Maximize2 className="w-5 h-5" />}
