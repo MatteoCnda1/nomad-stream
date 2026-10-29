@@ -33,7 +33,7 @@ export function searchRoutes({ plex, librarySearch }) {
     const q = typeof req.query.q === "string" ? req.query.q.slice(0, 120) : "";
     if (!q.trim()) return res.json(EMPTY);
 
-    const [library, fromPlex] = await Promise.allSettled([librarySearch.search(q), plexSearch(q)]);
+    const [library, fromPlex] = await Promise.allSettled([librarySearch.search(q, { limits: LIMITS }), plexSearch(q)]);
     const lib = library.status === "fulfilled" ? library.value : null;
     const px = fromPlex.status === "fulfilled" ? fromPlex.value : null;
     if (!lib && !px) {

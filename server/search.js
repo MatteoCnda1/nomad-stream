@@ -179,6 +179,7 @@ export function buildIndex(rawItems) {
       type: raw.type,
       fields,
       popularity: (raw.viewCount || 0) + Math.log10(1 + (raw.ratingCount || 0)),
+      artistKey: raw.grandparentRatingKey, // titres : artiste (lecture continue)
     });
   }
   return { entries, vocabulary: [...vocabulary], builtAt: Date.now() };

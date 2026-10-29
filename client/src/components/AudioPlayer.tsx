@@ -28,6 +28,13 @@ import {
 import { formatClock, formatTrackDuration } from "../utils/format";
 import { ThemeToggle } from "./ui";
 
+// Répétition désactivée = lecture continue en fin de file (titres proches)
+const REPEAT_LABELS = {
+  off: "Répétition désactivée (lecture continue)",
+  all: "Répéter la file",
+  one: "Répéter ce titre",
+} as const;
+
 const HeartButton: React.FC<{
   saved: boolean;
   onClick: () => void;
@@ -232,8 +239,8 @@ export const AudioPlayer: React.FC = () => {
                 <button
                   type="button"
                   onClick={toggleRepeatMode}
-                  aria-label={`Répétition (${repeatMode})`}
-                  title={`Mode répétition : ${repeatMode}`}
+                  aria-label={REPEAT_LABELS[repeatMode]}
+                  title={REPEAT_LABELS[repeatMode]}
                   className={`press w-8 h-8 grid place-items-center rounded-full transition-colors ${
                     repeatMode !== "off" ? "text-accent" : "text-muted hover:text-fg"
                   }`}
@@ -382,7 +389,7 @@ export const AudioPlayer: React.FC = () => {
                   <div className="py-8 text-center text-xs text-muted">
                     Aucun autre titre dans la file.
                     <br />
-                    La file continue rebouclera sur le morceau en cours.
+                    {repeatMode === "off" ? "La lecture continuera avec des titres proches." : "La file reprendra au début."}
                   </div>
                 ) : (
                   upNext.map((item, i) => {
@@ -407,6 +414,7 @@ export const AudioPlayer: React.FC = () => {
                               {item.title}
                             </span>
                             <span className="block text-[11px] text-muted truncate">
+                              {item.autoplay && "Lecture continue · "}
                               {item.grandparentTitle || item.parentTitle}
                             </span>
                           </span>
@@ -675,7 +683,8 @@ export const AudioPlayer: React.FC = () => {
                   <button
                     type="button"
                     onClick={toggleRepeatMode}
-                    aria-label={`Répétition (${repeatMode})`}
+                    aria-label={REPEAT_LABELS[repeatMode]}
+                    title={REPEAT_LABELS[repeatMode]}
                     className={`press w-[44px] h-[44px] grid place-items-center rounded-full transition-colors ${
                       repeatMode !== "off" ? "text-accent" : "text-muted hover:text-fg"
                     }`}
@@ -728,7 +737,8 @@ export const AudioPlayer: React.FC = () => {
                                 {item.title}
                               </span>
                               <span className="block text-xs text-muted truncate">
-                                {item.grandparentTitle || item.parentTitle}
+                                {item.autoplay && "Lecture continue · "}
+                              {item.grandparentTitle || item.parentTitle}
                               </span>
                             </span>
                             <span className="text-xs text-muted tabular-nums">
@@ -809,7 +819,9 @@ export const AudioPlayer: React.FC = () => {
                       <ListMusic className="w-12 h-12 mx-auto mb-2 opacity-40" strokeWidth={1.5} />
                       <p className="font-semibold text-sm">Fin de la file</p>
                       <p className="text-xs mt-1">
-                        La lecture reboucle automatiquement afin de ne jamais s'interrompre sans votre accord.
+                        {repeatMode === "off"
+                          ? "La lecture continuera avec des titres proches de celui-ci."
+                          : "La file reprendra au début."}
                       </p>
                     </div>
                   ) : (
@@ -835,7 +847,8 @@ export const AudioPlayer: React.FC = () => {
                                 {item.title}
                               </span>
                               <span className="block text-xs text-muted truncate">
-                                {item.grandparentTitle || item.parentTitle}
+                                {item.autoplay && "Lecture continue · "}
+                              {item.grandparentTitle || item.parentTitle}
                               </span>
                             </span>
                           </button>

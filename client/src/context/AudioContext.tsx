@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useRef, useEffect, useCallback } from "react";
 import { MediaItem } from "../types";
-import { reportTimeline } from "../api";
+import { fetchRadio, reportTimeline } from "../api";
 
 export type RepeatMode = "all" | "one" | "off";
 
@@ -49,15 +49,17 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [isQueueOpen, setIsQueueOpen] = useState(false);
   const [volume, setVolumeState] = useState(1);
-  const [repeatMode, setRepeatMode] = useState<RepeatMode>("all"); // "all" par défaut pour file continue
+  // Sans répétition, la fin de la file enchaîne sur des titres proches (lecture continue)
+  const [repeatMode, setRepeatMode] = useState<RepeatMode>("off");
   const [shuffleMode, setShuffleMode] = useState(false);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const queueRef = useRef<MediaItem[]>([]);
   const queueIndexRef = useRef<number>(0);
   const currentTrackRef = useRef<MediaItem | null>(null);
-  const repeatModeRef = useRef<RepeatMode>("all");
+  const repeatModeRef = useRef<RepeatMode>("off");
   const reportIntervalRef = useRef<number | null>(null);
+  const radioRef = useRef<Promise<boolean> | null>(null);
 
   // Synchronisation des refs avec le state pour éviter tout problème de fermeture (stale closure)
   useEffect(() => {
@@ -97,13 +99,48 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  // Passer à la musique suivante (ou boucler la file)
-  const nextTrack = useCallback(() => {
+  // Lecture continue (#24) : des titres proches du dernier de la file sont ajoutés à sa suite,
+  // marqués « autoplay ». Résout à true si des titres ont été ajoutés.
+  const extendWithRadio = useCallback((): Promise<boolean> => {
+    if (radioRef.current) return radioRef.current;
+    const q = queueRef.current;
+    const seed = q[q.length - 1];
+    if (!seed) return Promise.resolve(false);
+    const request = fetchRadio(seed.id, q.slice(-300).map((t) => t.id))
+      .then((tracks) => {
+        const current = queueRef.current;
+        // Une autre file a été lancée entre-temps : ces titres ne la concernent pas
+        if (!tracks.length || current[current.length - 1]?.id !== seed.id) return false;
+        const updated = [...current, ...tracks.map((t) => ({ ...t, autoplay: true }))];
+        setQueue(updated);
+        queueRef.current = updated;
+        return true;
+      })
+      .catch((err) => {
+        console.warn("Lecture continue indisponible :", err);
+        return false;
+      })
+      .finally(() => {
+        radioRef.current = null;
+      });
+    radioRef.current = request;
+    return request;
+  }, []);
+
+  // Titre suivant ; en fin de file, retour au début si toute la file se répète, sinon lecture
+  // continue (jamais de retour silencieux sur le même morceau)
+  const advance = useCallback(() => {
     const q = queueRef.current;
     if (q.length === 0) return;
-    const nextIdx = (queueIndexRef.current + 1) % q.length;
-    playAtIndex(nextIdx);
-  }, [playAtIndex]);
+    const idx = queueIndexRef.current;
+    if (idx + 1 < q.length) return playAtIndex(idx + 1);
+    if (repeatModeRef.current === "all") return playAtIndex(0);
+    extendWithRadio().then((added) => {
+      if (added && queueIndexRef.current === idx) playAtIndex(idx + 1);
+    });
+  }, [playAtIndex, extendWithRadio]);
+
+  const nextTrack = advance;
 
   // Initialisation de l'élément Audio et de ses écouteurs
   useEffect(() => {
@@ -150,30 +187,19 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
         return;
       }
 
-      if (q.length === 0) return;
-
-      if (idx + 1 < q.length) {
-        // Piste suivante dans la file d'attente
-        playAtIndex(idx + 1);
-      } else {
-        // Fin de la file d'attente atteinte :
-        // La seule interruption voulue est un arrêt utilisateur, donc on boucle la file
-        if (repeat === "all" || repeat === "off") {
-          playAtIndex(0);
-        }
-      }
+      if (q.length === 0 || idx < 0) return;
+      advance();
     };
 
-    // Tolérance aux pannes réseau : passer automatiquement au morceau suivant après 400ms si erreur de flux
+    // Tolérance aux pannes réseau : passer automatiquement au morceau suivant après 400ms si erreur
+    // de flux, mais pas indéfiniment (serveur injoignable : chaque titre échouerait à son tour)
+    let errorStreak = 0;
     const handleError = () => {
       console.warn("Erreur de lecture audio, tentative de reprise sur la piste suivante…");
-      const q = queueRef.current;
-      if (q.length > 1) {
-        window.setTimeout(() => {
-          const nextIdx = (queueIndexRef.current + 1) % q.length;
-          playAtIndex(nextIdx);
-        }, 400);
-      }
+      if (++errorStreak <= 5) window.setTimeout(advance, 400);
+    };
+    const handlePlaying = () => {
+      errorStreak = 0;
     };
 
     audio.addEventListener("timeupdate", handleTimeUpdate);
@@ -182,6 +208,7 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
     audio.addEventListener("play", handlePlay);
     audio.addEventListener("pause", handlePause);
     audio.addEventListener("error", handleError);
+    audio.addEventListener("playing", handlePlaying);
 
     return () => {
       audio.pause();
@@ -191,8 +218,15 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
       audio.removeEventListener("play", handlePlay);
       audio.removeEventListener("pause", handlePause);
       audio.removeEventListener("error", handleError);
+      audio.removeEventListener("playing", handlePlaying);
     };
-  }, [playAtIndex]);
+  }, [advance]);
+
+  // Dernier titre de la file entamé : la suite est préparée à l'avance (visible dans « À suivre »)
+  useEffect(() => {
+    if (!currentTrack || repeatMode !== "off") return;
+    if (queueRef.current.length - 1 - queueIndexRef.current <= 0) extendWithRadio();
+  }, [currentTrack, repeatMode, extendWithRadio]);
 
   // Configuration MediaSession (CarPlay, Android Auto, Écran de verrouillage iOS)
   useEffect(() => {
@@ -363,7 +397,12 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    const updated = [...queueRef.current, ...tracksToAdd];
+    // Avant les titres de la lecture continue : ce que l'on ajoute soi-même passe en premier
+    const q = queueRef.current;
+    const cur = queueIndexRef.current;
+    const firstAuto = q.findIndex((t, i) => i > cur && t.autoplay);
+    const at = firstAuto >= 0 ? firstAuto : q.length;
+    const updated = [...q.slice(0, at), ...tracksToAdd, ...q.slice(at)];
     setQueue(updated);
     queueRef.current = updated;
   };
@@ -475,11 +514,12 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
     queueRef.current = updated;
   };
 
+  // Désactivée (lecture continue) → toute la file → ce titre
   const toggleRepeatMode = () => {
     setRepeatMode((prev) => {
+      if (prev === "off") return "all";
       if (prev === "all") return "one";
-      if (prev === "one") return "off";
-      return "all";
+      return "off";
     });
   };
 

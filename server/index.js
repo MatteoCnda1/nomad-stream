@@ -17,6 +17,7 @@ import { imageRoutes } from "./routes/images.js";
 import { transcodeRoutes } from "./routes/transcode.js";
 import { playbackRoutes } from "./routes/playback.js";
 import { searchRoutes } from "./routes/search.js";
+import { radioRoutes } from "./routes/radio.js";
 import { createLibrarySearch } from "./search.js";
 
 dotenv.config();
@@ -89,6 +90,7 @@ if (process.env.NOMAD_SEARCH_WARMUP !== "0") {
   setTimeout(() => librarySearch.rebuild().catch((e) => console.error("Index de recherche :", e.message)), 3000).unref();
 }
 app.use(searchRoutes({ plex, librarySearch }));
+app.use(radioRoutes({ plex, librarySearch, cache: createMemoryCache({ maxEntries: 200 }) }));
 app.use(streamRoutes({ plex }));
 app.use(imageRoutes({
   plex,

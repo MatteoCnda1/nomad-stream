@@ -36,6 +36,7 @@ export interface MediaItem {
   streamUrl?: string;
   trackNumber?: number;
   score?: number; // pertinence dans une recherche (0 à 1)
+  autoplay?: boolean; // ajouté à la file par la lecture continue
 }
 
 export interface StreamTrack {

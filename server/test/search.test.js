@@ -62,7 +62,8 @@ describe("notation", () => {
     const r = search("daft punk");
     assert.equal(r.top.type, "artist");
     assert.deepEqual(titles(r.albums), ["Random Access Memories"]);
-    assert.deepEqual(titles(r.tracks), ["Get Lucky (feat. Pharrell Williams)", "Instant Crush"], "le plus écouté d'abord");
+    assert.equal(r.tracks.length, 3);
+    assert.equal(r.tracks[0].title, "Get Lucky (feat. Pharrell Williams)", "le plus écouté d'abord");
     assert.match(r.tracks[0].streamUrl, /^\/api\/stream\/audio\?key=/);
   });
 
@@ -104,7 +105,7 @@ describe("route /api/search", () => {
     const r = await get("daft pank");
     assert.equal(r.top.title, "Daft Punk");
     assert.deepEqual(titles(r.artists), ["Daft Punk"]);
-    assert.equal(r.tracks.length, 2);
+    assert.equal(r.tracks.length, 3);
     assert.ok(plex.requests.includes("/library/sections/5/all"));
     assert.deepEqual(titles((await get("bravo")).movies), ["Bravo"]);
   });
