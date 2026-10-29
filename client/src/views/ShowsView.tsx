@@ -1,8 +1,8 @@
-import React, { useEffect, useState } from "react";
-import { MediaItem } from "../types";
+import React from "react";
 import { fetchShows } from "../api";
+import { usePagedList } from "../hooks/usePagedList";
 import { PosterCard } from "../components/ui";
-import { LibraryHeader, POSTER_GRID, PosterGridSkeleton } from "../components/LibraryHeader";
+import { LibraryHeader, LoadMore, POSTER_GRID, PosterGridSkeleton } from "../components/LibraryHeader";
 
 interface ShowsViewProps {
   onOpenShow: (showId: string) => void;
@@ -11,23 +11,8 @@ interface ShowsViewProps {
 }
 
 export const ShowsView: React.FC<ShowsViewProps> = ({ onOpenShow, sort, onSortChange }) => {
-  const [shows, setShows] = useState<MediaItem[]>([]);
-  const [totalSize, setTotalSize] = useState(0);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    setLoading(true);
-    fetchShows(0, 100, sort)
-      .then((res) => {
-        setShows(res.items);
-        setTotalSize(res.totalSize);
-        setLoading(false);
-      })
-      .catch((err) => {
-        console.error(err);
-        setLoading(false);
-      });
-  }, [sort]);
+  const list = usePagedList(`shows:${sort}`, (offset, limit) => fetchShows(offset, limit, sort));
+  const { items: shows, totalSize, loading } = list;
 
   return (
     <div>
@@ -53,6 +38,7 @@ export const ShowsView: React.FC<ShowsViewProps> = ({ onOpenShow, sort, onSortCh
           ))}
         </div>
       )}
+      <LoadMore {...list} onLoadMore={list.loadMore} shown={shows.length} total={totalSize} />
     </div>
   );
 };

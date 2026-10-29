@@ -6,7 +6,8 @@ import { useWishlist } from "../context/WishlistContext";
 import { usePlaylist } from "../context/PlaylistContext";
 import { useAudio } from "../context/AudioContext";
 import { MusicTile, Sk, Pills, PlayGlyph } from "../components/ui";
-import { LibraryHeader, TILE_GRID } from "../components/LibraryHeader";
+import { LibraryHeader, LoadMore, TILE_GRID } from "../components/LibraryHeader";
+import { usePagedList } from "../hooks/usePagedList";
 import { CollectionArt, CollectionHeader } from "../components/Collection";
 import { PlaylistArt } from "../components/PlaylistArt";
 
@@ -45,9 +46,8 @@ export const MusicView: React.FC<MusicViewProps> = ({
   onOpenPlaylist,
 }) => {
   const activeTab = showPlaylists ? "playlists" : "artists";
-  const [artists, setArtists] = useState<MediaItem[]>([]);
-  const [totalSize, setTotalSize] = useState(0);
-  const [loading, setLoading] = useState(true);
+  const artistList = usePagedList("artists", fetchMusicArtists);
+  const { items: artists, totalSize, loading } = artistList;
   const { isSaved, toggle } = useWishlist();
   const { playlists, createPlaylist } = usePlaylist();
   const { playTrack } = useAudio();
@@ -63,19 +63,6 @@ export const MusicView: React.FC<MusicViewProps> = ({
   const detail = artistDetail?.artist?.id === artistId ? artistDetail : null;
   const selectedArtist = detail?.artist ?? (artistHint?.id === artistId ? artistHint : null);
   const artistAlbums = detail?.albums ?? [];
-
-  useEffect(() => {
-    fetchMusicArtists(0, 100)
-      .then((res) => {
-        setArtists(res.items);
-        setTotalSize(res.totalSize);
-        setLoading(false);
-      })
-      .catch((err) => {
-        console.error(err);
-        setLoading(false);
-      });
-  }, []);
 
   useEffect(() => {
     if (!artistId) return;
@@ -288,6 +275,7 @@ export const MusicView: React.FC<MusicViewProps> = ({
               ))}
             </div>
           )}
+          <LoadMore {...artistList} onLoadMore={artistList.loadMore} shown={artists.length} total={totalSize} />
         </>
       )}
 

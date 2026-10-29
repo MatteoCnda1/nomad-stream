@@ -36,6 +36,33 @@ export const POSTER_GRID = "grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:gr
 // Grille de tuiles musique (artistes, albums, playlists)
 export const TILE_GRID = "grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-6 gap-1 lg:gap-2 -mx-2.5";
 
+// Pied d'une liste chargée par pages : repère qui déclenche la page suivante au défilement, et
+// bouton de secours (clavier, lecteur d'écran, échec réseau)
+export const LoadMore: React.FC<{
+  sentinelRef: (node: HTMLElement | null) => void;
+  hasMore: boolean;
+  loadingMore: boolean;
+  failed: boolean;
+  onLoadMore: () => void;
+  shown: number;
+  total: number;
+}> = ({ sentinelRef, hasMore, loadingMore, failed, onLoadMore, shown, total }) =>
+  hasMore ? (
+    <div ref={sentinelRef} className="mt-8 flex flex-col items-center gap-2.5">
+      <button
+        type="button"
+        onClick={onLoadMore}
+        disabled={loadingMore}
+        className="press h-11 px-5 rounded-full border border-line2 text-sm font-medium hover:bg-card disabled:opacity-60"
+      >
+        {loadingMore ? "Chargement…" : failed ? "Réessayer" : "Afficher plus"}
+      </button>
+      <p className="text-xs text-muted" aria-live="polite">
+        {shown} sur {total}
+      </p>
+    </div>
+  ) : null;
+
 export const PosterGridSkeleton: React.FC<{ count?: number }> = ({ count = 12 }) => (
   <div className={POSTER_GRID} aria-busy="true" aria-label="Chargement">
     {Array.from({ length: count }, (_, i) => (
