@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import Hls from "hls.js";
 import { MediaDetail, MediaItem } from "../types";
-import { reportTimeline, beaconTimeline, getDeviceId } from "../api";
+import { reportTimeline, beaconTimeline, beaconPlaybackLog, getDeviceId } from "../api";
 import { useAudio } from "../context/AudioContext";
 import {
   ArrowLeft,
@@ -17,6 +17,8 @@ import {
   Gauge,
   Check,
   AlertTriangle,
+  Activity,
+  X,
 } from "lucide-react";
 import {
   QUALITIES,
@@ -71,6 +73,23 @@ const newSessionId = () => "nomad-" + Math.random().toString(36).slice(2, 12);
 // Statistiques d'un segment HLS : attente que Plex le prépare, puis transfert réseau
 type FragSample = { ttfbMs: number; transferMs: number; bytes: number };
 const median = (values: number[]) => [...values].sort((a, b) => a - b)[Math.floor(values.length / 2)];
+
+// Goulot probable d'après les derniers segments : si Plex met longtemps à les préparer alors qu'ils
+// arrivent vite une fois prêts, c'est la conversion qui ne suit pas, pas le réseau
+type Bottleneck = "network" | "transcoder";
+const bottleneckOf = (samples: FragSample[]): Bottleneck | null => {
+  const recent = samples.slice(-4);
+  if (recent.length < 2) return null;
+  return median(recent.map((s) => s.ttfbMs)) > 2 * median(recent.map((s) => s.transferMs)) ? "transcoder" : "network";
+};
+
+// État du transcodeur côté passerelle, pour le panneau de statistiques
+type ServerTx =
+  | { kind: "igpu"; aheadSeconds: number; paused: boolean; running: boolean; hwDecode: boolean }
+  | { kind: "plex"; speed: number | null; throttled: boolean; videoDecision: string | null; hw: boolean };
+
+const fmtMbps = (kbps: number) => `${(kbps / 1000).toFixed(1).replace(".", ",")} Mb/s`;
+const fmtSec = (s: number) => `${s.toFixed(1).replace(".", ",")} s`;
 
 // Safari (macOS, iOS) : HLS natif, plus fiable (AirPlay, image dans l'image, écran verrouillé)
 const isAppleWebKit = () =>
@@ -161,6 +180,30 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ media, localSrc, onClo
   const fragSamplesRef = useRef<FragSample[]>([]);
   const transcoderWarnedRef = useRef(false);
 
+  // Statistiques de la séance : panneau « Statistiques » et bilan envoyé au journal du serveur
+  const sessionStatsRef = useRef({
+    firstLoadAt: 0,
+    ttffMs: null as number | null,
+    stalls: 0,
+    stallMs: 0,
+    cause: null as Bottleneck | null,
+    qualitySwitches: 0,
+    restarts: 0,
+    watchedS: 0,
+    lastTime: 0,
+    error: null as string | null,
+    // Images : cumul des sources précédentes (relances, changements de qualité) + source en cours,
+    // relevées pendant la lecture (au démontage, <video> n'est déjà plus accessible)
+    droppedFrames: 0,
+    totalFrames: 0,
+    curDropped: 0,
+    curTotal: 0,
+  });
+  const loggedRef = useRef(false);
+  const [showStats, setShowStats] = useState(false);
+  const [, setStatsTick] = useState(0);
+  const [serverTx, setServerTx] = useState<ServerTx | null>(null);
+
   const controlsTimeoutRef = useRef<number | null>(null);
   const toastTimeoutRef = useRef<number | null>(null);
   const lastTapRef = useRef<{ time: number; x: number }>({ time: 0, x: 0 });
@@ -188,12 +231,49 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ media, localSrc, onClo
   });
 
   const setActiveMode = (next: Active) => {
+    const prev = activeRef.current;
+    if (prev && (prev.quality !== next.quality || prev.mode !== next.mode)) sessionStatsRef.current.qualitySwitches++;
     activeRef.current = next;
     setActive(next);
   };
 
+  // Débit estimé : mesuré par hls.js pendant la lecture, sinon le dernier mémorisé pour l'appareil
+  const bandwidthKbps = () => {
+    const est = hlsRef.current?.bandwidthEstimate;
+    return est && isFinite(est) ? Math.round(est / 1000) : loadBandwidth();
+  };
+
+  // Bilan de la séance, une seule fois (fermeture du lecteur ou de l'onglet)
+  const sendPlaybackLog = () => {
+    const s = sessionStatsRef.current;
+    if (loggedRef.current || !s.firstLoadAt) return;
+    loggedRef.current = true;
+    const cur = activeRef.current;
+    beaconPlaybackLog({
+      id: media.id,
+      title: media.parentTitle ? `${media.grandparentTitle || media.parentTitle} - ${media.title}` : media.title,
+      mode: localSrc ? "local" : cur?.mode ?? null,
+      quality: cur?.quality ?? null,
+      ttffMs: s.ttffMs,
+      watchedS: Math.round(s.watchedS),
+      stalls: s.stalls,
+      stallMs: Math.round(s.stallMs),
+      qualitySwitches: s.qualitySwitches,
+      restarts: s.restarts,
+      cause: s.cause,
+      bandwidthKbps: bandwidthKbps(),
+      droppedFrames: s.droppedFrames + s.curDropped,
+      totalFrames: s.totalFrames + s.curTotal,
+      error: s.error,
+    });
+  };
+
   // Arrête le flux en cours (lecteur + session de conversion, Plex ou iGPU)
   const teardown = () => {
+    const stats = sessionStatsRef.current;
+    stats.droppedFrames += stats.curDropped;
+    stats.totalFrames += stats.curTotal;
+    stats.curDropped = stats.curTotal = 0;
     hlsRef.current?.destroy();
     hlsRef.current = null;
     const video = videoRef.current;
@@ -312,6 +392,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ media, localSrc, onClo
     const video = videoRef.current;
     if (!video) return;
     const loadId = ++loadIdRef.current;
+    if (!sessionStatsRef.current.firstLoadAt) sessionStatsRef.current.firstLoadAt = Date.now();
     teardown();
     setPhase("loading");
     setErrorText("");
@@ -437,6 +518,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ media, localSrc, onClo
       return;
     }
     restartsRef.current.push(now);
+    sessionStatsRef.current.restarts++;
     const cur = activeRef.current;
     // Flux iGPU qui échoue deux fois de suite : on passe par le transcodeur de Plex
     if (cur?.mode === "abr") {
@@ -459,18 +541,14 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ media, localSrc, onClo
     const cur = activeRef.current;
     const now = Date.now();
     if (!cur || cur.mode !== "hls" || qualityPrefRef.current !== "auto" || now - lastDowngradeRef.current < 20000) return;
-    // Si les segments arrivent vite une fois prêts mais que Plex met longtemps à les préparer,
-    // c'est la conversion (ex. 4K HEVC sans accélération matérielle) qui ne suit pas, pas le réseau :
-    // baisser la qualité n'y changerait rien
-    const recent = fragSamplesRef.current.slice(-4);
-    if (hlsRef.current && recent.length >= 2) {
-      if (median(recent.map((s) => s.ttfbMs)) > 2 * median(recent.map((s) => s.transferMs))) {
-        if (!transcoderWarnedRef.current) {
-          transcoderWarnedRef.current = true;
-          showToast("Le serveur peine à convertir ce fichier en temps réel");
-        }
-        return;
+    // Conversion qui ne suit pas (ex. 4K HEVC sans accélération matérielle) : baisser la qualité
+    // n'y changerait rien
+    if (hlsRef.current && bottleneckOf(fragSamplesRef.current) === "transcoder") {
+      if (!transcoderWarnedRef.current) {
+        transcoderWarnedRef.current = true;
+        showToast("Le serveur peine à convertir ce fichier en temps réel");
       }
+      return;
     }
     const next = lowerQuality(cur.quality, media);
     if (!next) return;
@@ -511,6 +589,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ media, localSrc, onClo
 
     // Fermeture d'onglet : arrêter le transcodage et enregistrer la position quoi qu'il arrive
     const onPageHide = () => {
+      sendPlaybackLog();
       if (sessionRef.current) navigator.sendBeacon?.(`/api/stream/hls/stop?session=${sessionRef.current}`);
       if (txRef.current) navigator.sendBeacon?.(`/api/tx/${txRef.current.job}/stop`);
       beaconTimeline(timeline("stopped"));
@@ -526,20 +605,54 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ media, localSrc, onClo
       if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
       loadIdRef.current++;
       const stopped = timeline("stopped");
+      sendPlaybackLog(); // avant teardown, qui remet à zéro les compteurs d'images de <video>
       teardown();
       reportTimeline(stopped);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    if (errorText) sessionStatsRef.current.error = errorText;
+  }, [errorText]);
+
+  // Panneau de statistiques ouvert : mesures locales chaque seconde, transcodeur toutes les 2 s
+  useEffect(() => {
+    if (!showStats) return;
+    let stopped = false;
+    const tick = window.setInterval(() => setStatsTick((t) => t + 1), 1000);
+    const poll = async () => {
+      const query = txRef.current ? `job=${txRef.current.job}` : sessionRef.current ? `session=${sessionRef.current}` : null;
+      if (!query) return setServerTx(null);
+      try {
+        const r = await fetch(`/api/playback/stats?${query}`);
+        if (!stopped && r.ok) setServerTx((await r.json()).transcoder ?? null);
+      } catch {
+        // Réseau coupé : on garde la dernière valeur
+      }
+    };
+    poll();
+    const timer = window.setInterval(poll, 2000);
+    return () => {
+      stopped = true;
+      clearInterval(tick);
+      clearInterval(timer);
+    };
+  }, [showStats]);
+
   // --- Événements de l'élément <video> ---
 
   const onPlaying = () => {
     const now = Date.now();
+    const stats = sessionStatsRef.current;
+    if (stats.ttffMs == null && stats.firstLoadAt) stats.ttffMs = now - stats.firstLoadAt;
     setPhase("playing");
     restartsRef.current = [];
     tracksRef.current.dirty = false;
     if (stallStartRef.current) {
+      stats.stalls++;
+      stats.stallMs += now - stallStartRef.current;
+      stats.cause = bottleneckOf(fragSamplesRef.current) ?? stats.cause;
       stallsRef.current = [...stallsRef.current.filter((t) => now - t < STALL_WINDOW_MS), now];
       stallStartRef.current = 0;
       if (stallsRef.current.length >= STALLS_BEFORE_DOWNGRADE) maybeDowngrade();
@@ -688,6 +801,76 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ media, localSrc, onClo
     }
   };
 
+  // Lignes du panneau « Statistiques » (recalculées à chaque rafraîchissement)
+  const statsRows = (): [string, string][] => {
+    const video = videoRef.current;
+    const cur = activeRef.current;
+    const s = sessionStatsRef.current;
+    const rows: [string, string][] = [];
+    rows.push([
+      "Mode",
+      localSrc
+        ? "Téléchargement (sur l'appareil)"
+        : cur?.mode === "direct"
+        ? "Lecture directe du fichier"
+        : cur?.mode === "abr"
+        ? "Conversion iGPU multi-débits"
+        : cur?.mode === "hls"
+        ? "Conversion Plex"
+        : "—",
+    ]);
+    const shown = video?.videoWidth ? ` · ${video.videoWidth}×${video.videoHeight}` : "";
+    rows.push(["Qualité", `${cur ? (cur.mode === "direct" ? "Originale" : qualityLabel(cur.quality)) : "—"}${shown}`]);
+    const streamKbps =
+      localSrc || !cur
+        ? null
+        : cur.mode === "abr"
+        ? txVariants.find((v) => v.id === cur.quality)?.kbps ?? null
+        : cur.quality === "original"
+        ? media.bitrate || null
+        : qualityKbps(cur.quality);
+    if (streamKbps) rows.push(["Débit du flux", fmtMbps(streamKbps)]);
+    const bw = bandwidthKbps();
+    if (bw) rows.push(["Débit mesuré", fmtMbps(bw)]);
+    if (video) {
+      let ahead = 0;
+      for (let i = 0; i < video.buffered.length; i++) {
+        if (video.buffered.start(i) <= video.currentTime + 0.5 && video.buffered.end(i) >= video.currentTime) {
+          ahead = video.buffered.end(i) - video.currentTime;
+        }
+      }
+      rows.push(["Tampon d'avance", fmtSec(ahead)]);
+    }
+    const recent = fragSamplesRef.current.slice(-4);
+    if (recent.length >= 2) {
+      const ttfb = Math.round(median(recent.map((x) => x.ttfbMs)));
+      const transfer = Math.round(median(recent.map((x) => x.transferMs)));
+      rows.push(["Segments", `préparation ${ttfb} ms · transfert ${transfer} ms`]);
+    }
+    if (serverTx?.kind === "igpu") {
+      rows.push([
+        "Transcodeur iGPU",
+        `${fmtSec(serverTx.aheadSeconds)} d'avance${serverTx.paused ? " (en pause : assez d'avance)" : ""}${serverTx.hwDecode ? "" : " · décodage CPU"}`,
+      ]);
+    } else if (serverTx?.kind === "plex") {
+      const speed = serverTx.speed != null ? `${serverTx.speed.toFixed(1).replace(".", ",")}× temps réel` : "—";
+      rows.push(["Transcodeur Plex", `${speed}${serverTx.throttled ? " (ralenti : assez d'avance)" : ""}${serverTx.hw ? " · matériel" : ""}`]);
+    }
+    rows.push(["1re image", s.ttffMs != null ? fmtSec(s.ttffMs / 1000) : "…"]);
+    rows.push([
+      "Coupures",
+      s.stalls
+        ? `${s.stalls} (${fmtSec(s.stallMs / 1000)})${s.cause ? ` · cause probable : ${s.cause === "network" ? "réseau" : "conversion"}` : ""}`
+        : "aucune",
+    ]);
+    const q = video?.getVideoPlaybackQuality?.();
+    if (q?.totalVideoFrames) rows.push(["Images perdues", `${q.droppedVideoFrames} sur ${q.totalVideoFrames}`]);
+    if (s.qualitySwitches || s.restarts) {
+      rows.push(["Changements", `${s.qualitySwitches} de qualité · ${s.restarts} relance${s.restarts > 1 ? "s" : ""}`]);
+    }
+    return rows;
+  };
+
   const qualityBadge = localSrc
     ? "Téléchargé"
     : active
@@ -735,6 +918,16 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ media, localSrc, onClo
         onTimeUpdate={() => {
           const video = videoRef.current;
           if (!video || phase === "loading") return;
+          // Temps réellement regardé : les sauts (écart > 2 s) ne comptent pas
+          const stats = sessionStatsRef.current;
+          const delta = video.currentTime - stats.lastTime;
+          if (delta > 0 && delta < 2) stats.watchedS += delta;
+          stats.lastTime = video.currentTime;
+          const frames = video.getVideoPlaybackQuality?.();
+          if (frames) {
+            stats.curDropped = frames.droppedVideoFrames;
+            stats.curTotal = frames.totalVideoFrames;
+          }
           if (video.currentTime > 0) positionRef.current = video.currentTime;
           setCurrentTime(video.currentTime);
           onProgress();
@@ -794,6 +987,39 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ media, localSrc, onClo
         </div>
       )}
 
+      {/* STATISTIQUES DE LECTURE (restent affichées quand les commandes s'effacent) */}
+      {showStats && (
+        <div
+          role="region"
+          aria-label="Statistiques de lecture"
+          onTouchEnd={(e) => e.stopPropagation()}
+          className="absolute z-20 left-4 top-[max(96px,calc(env(safe-area-inset-top)+84px))] w-[min(340px,calc(100vw-32px))] rounded-2xl bg-black/80 backdrop-blur-md border border-white/10 p-4 text-xs"
+        >
+          <div className="flex items-center justify-between mb-2.5">
+            <span className="font-semibold flex items-center gap-2">
+              <Activity className="w-4 h-4 text-[#ff4d55]" />
+              Statistiques
+            </span>
+            <button
+              type="button"
+              onClick={() => setShowStats(false)}
+              aria-label="Fermer les statistiques"
+              className="w-7 h-7 rounded-full grid place-items-center hover:bg-white/10"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+          <dl className="grid grid-cols-[auto,1fr] gap-x-3 gap-y-1.5 tabular-nums">
+            {statsRows().map(([label, value]) => (
+              <React.Fragment key={label}>
+                <dt className="text-white/55">{label}</dt>
+                <dd className="text-white/90">{value}</dd>
+              </React.Fragment>
+            ))}
+          </dl>
+        </div>
+      )}
+
       {/* OVERLAY DE CONTRÔLES */}
       <div
         className={`absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/80 flex flex-col justify-between p-4 sm:p-6 transition-opacity duration-300 ${
@@ -823,6 +1049,14 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ media, localSrc, onClo
           </div>
 
           <div className="flex items-center gap-2 flex-shrink-0">
+            <button
+              onClick={() => setShowStats((v) => !v)}
+              className={`p-2.5 rounded-full active:scale-95 transition ${showStats ? "bg-[#e5131d]" : "bg-white/10 hover:bg-white/20"}`}
+              aria-label="Statistiques de lecture"
+              aria-pressed={showStats}
+            >
+              <Activity className="w-5 h-5" />
+            </button>
             <button
               onClick={() => !localSrc && setMenu("quality")}
               className="h-11 pl-3 pr-3.5 rounded-full bg-white/10 hover:bg-white/20 active:scale-95 flex items-center gap-2 text-xs font-semibold"
