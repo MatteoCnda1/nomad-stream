@@ -1,7 +1,9 @@
 import React, { useEffect, useState } from "react";
 import { useAudio, useAudioTime } from "../context/AudioContext";
-import { MediaItem } from "../types";
-import { fetchHubs, fetchAlbumDetail } from "../api";
+import { MediaItem, MusicGenre } from "../types";
+import { fetchHubs, fetchAlbumDetail, fetchMusicGenres } from "../api";
+import { loadGenreMix } from "../components/GenreMixes";
+import { PlaylistArt } from "../components/PlaylistArt";
 import {
   Play,
   Pause,
@@ -13,6 +15,7 @@ import {
   Tv,
   Radio,
   Volume2,
+  Shuffle,
 } from "lucide-react";
 
 interface CarModeViewProps {
@@ -48,9 +51,10 @@ export const CarModeView: React.FC<CarModeViewProps> = ({ onPlayMedia }) => {
     playTrack,
   } = useAudio();
 
-  const [activeTab, setActiveTab] = useState<"player" | "continue" | "albums">("player");
+  const [activeTab, setActiveTab] = useState<"player" | "continue" | "albums" | "mixes">("player");
   const [onDeck, setOnDeck] = useState<MediaItem[]>([]);
   const [recentAlbums, setRecentAlbums] = useState<MediaItem[]>([]);
+  const [genres, setGenres] = useState<MusicGenre[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -64,7 +68,23 @@ export const CarModeView: React.FC<CarModeViewProps> = ({ onPlayMedia }) => {
         console.error(e);
         setLoading(false);
       });
+    fetchMusicGenres()
+      .then(setGenres)
+      .catch(() => {});
   }, []);
+
+  // Mix d'un genre (#50) : un appui, un nouveau tirage, et retour au lecteur
+  const handlePlayGenre = async (genre: MusicGenre) => {
+    try {
+      const mix = await loadGenreMix(genre.id, true);
+      if (mix.items.length > 0) {
+        playTrack(mix.items[0], mix.items);
+        setActiveTab("player");
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
 
   const handlePlayAlbum = async (album: MediaItem) => {
     try {
@@ -82,10 +102,10 @@ export const CarModeView: React.FC<CarModeViewProps> = ({ onPlayMedia }) => {
     <div className="min-h-[82vh] flex flex-col justify-between select-none pb-20 anim-in pt-[max(18px,env(safe-area-inset-top))] lg:pt-1">
       <h1 className="sr-only">Mode voiture</h1>
       {/* Mode Car Tabs Header */}
-      <div className="grid grid-cols-3 gap-2 bg-card p-1.5 rounded-2xl">
+      <div className="grid grid-cols-4 gap-1.5 sm:gap-2 bg-card p-1.5 rounded-2xl">
         <button
           onClick={() => setActiveTab("player")}
-          className={`py-3 rounded-xl text-xs sm:text-sm font-bold flex items-center justify-center gap-2 transition active:scale-95 ${
+          className={`py-2.5 sm:py-3 rounded-xl text-xs sm:text-sm font-bold flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 transition active:scale-95 ${
             activeTab === "player"
               ? "bg-accent text-white shadow-lg shadow-accent/20"
               : "text-muted hover:text-fg"
@@ -97,7 +117,7 @@ export const CarModeView: React.FC<CarModeViewProps> = ({ onPlayMedia }) => {
 
         <button
           onClick={() => setActiveTab("continue")}
-          className={`py-3 rounded-xl text-xs sm:text-sm font-bold flex items-center justify-center gap-2 transition active:scale-95 ${
+          className={`py-2.5 sm:py-3 rounded-xl text-xs sm:text-sm font-bold flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 transition active:scale-95 ${
             activeTab === "continue"
               ? "bg-primary text-white shadow-lg shadow-primary/20"
               : "text-muted hover:text-fg"
@@ -109,7 +129,7 @@ export const CarModeView: React.FC<CarModeViewProps> = ({ onPlayMedia }) => {
 
         <button
           onClick={() => setActiveTab("albums")}
-          className={`py-3 rounded-xl text-xs sm:text-sm font-bold flex items-center justify-center gap-2 transition active:scale-95 ${
+          className={`py-2.5 sm:py-3 rounded-xl text-xs sm:text-sm font-bold flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 transition active:scale-95 ${
             activeTab === "albums"
               ? "bg-accent text-white shadow-lg shadow-accent/20"
               : "text-muted hover:text-fg"
@@ -117,6 +137,18 @@ export const CarModeView: React.FC<CarModeViewProps> = ({ onPlayMedia }) => {
         >
           <Disc3 className="w-4 h-4" />
           Albums
+        </button>
+
+        <button
+          onClick={() => setActiveTab("mixes")}
+          className={`py-2.5 sm:py-3 rounded-xl text-xs sm:text-sm font-bold flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 transition active:scale-95 ${
+            activeTab === "mixes"
+              ? "bg-accent text-white shadow-lg shadow-accent/20"
+              : "text-muted hover:text-fg"
+          }`}
+        >
+          <Shuffle className="w-4 h-4" />
+          Mixes
         </button>
       </div>
 
@@ -247,6 +279,28 @@ export const CarModeView: React.FC<CarModeViewProps> = ({ onPlayMedia }) => {
                 {album.parentTitle || "Artiste"}
               </p>
             </div>
+          ))}
+        </div>
+      )}
+
+      {/* TAB 4: MIXES PAR GENRE (un appui = un nouveau mix) */}
+      {activeTab === "mixes" && (
+        <div className="flex-1 py-4 grid grid-cols-2 gap-3">
+          {genres.length === 0 && (
+            <p className="col-span-2 py-12 text-center text-muted">Mixes indisponibles pour l'instant.</p>
+          )}
+          {genres.map((genre) => (
+            <button
+              type="button"
+              key={genre.id}
+              onClick={() => handlePlayGenre(genre)}
+              aria-label={`Écouter un mix ${genre.name}`}
+              className="p-3.5 rounded-2xl bg-card active:bg-surface3 transition flex flex-col items-center text-center"
+            >
+              <PlaylistArt images={genre.covers} className="w-24 h-24 mb-2" />
+              <span className="text-base font-bold truncate max-w-full">{genre.name}</span>
+              <span className="text-xs text-muted truncate max-w-full">{genre.trackCount} titres</span>
+            </button>
           ))}
         </div>
       )}

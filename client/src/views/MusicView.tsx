@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
-import { ArtistDetail, MediaItem } from "../types";
-import { fetchMusicArtists, fetchArtistDetail, searchArtists } from "../api";
-import { Heart, Plus, ListMusic, X, Search } from "lucide-react";
+import { ArtistDetail, MediaItem, MusicGenre } from "../types";
+import { fetchMusicArtists, fetchArtistDetail, searchArtists, fetchMusicGenres } from "../api";
+import { Heart, Plus, ListMusic, X, Search, RefreshCw } from "lucide-react";
 import { useWishlist } from "../context/WishlistContext";
 import { usePlaylist } from "../context/PlaylistContext";
 import { useAudio } from "../context/AudioContext";
@@ -10,18 +10,22 @@ import { LibraryHeader, LoadMore, TILE_GRID } from "../components/LibraryHeader"
 import { usePagedList } from "../hooks/usePagedList";
 import { CollectionArt, CollectionHeader } from "../components/Collection";
 import { PlaylistArt } from "../components/PlaylistArt";
+import { GenreTile, usePlayGenre } from "../components/GenreMixes";
+import { MusicSection } from "../router";
 
-// Artiste affiché et onglet Artistes / Playlists viennent de l'adresse (/musique/artiste/:id,
-// /musique/playlists) : le retour et le rechargement retrouvent le bon écran
+// Artiste affiché et onglet Artistes / Genres / Playlists viennent de l'adresse
+// (/musique/artiste/:id, /musique/genres, /musique/playlists) : le retour et le rechargement
+// retrouvent le bon écran
 interface MusicViewProps {
   artistId?: string;
   artistHint?: MediaItem | null; // l'artiste cliqué : son nom s'affiche sans attendre le serveur
-  showPlaylists: boolean;
-  onSectionChange: (playlists: boolean) => void;
+  section?: MusicSection; // absent : Artistes
+  onSectionChange: (section?: MusicSection) => void;
   onOpenArtist: (artist: MediaItem) => void;
   onArtistBack: () => void;
   onOpenAlbum: (albumId: string) => void;
   onOpenPlaylist?: (playlistId: string) => void;
+  onOpenGenre: (genreId: string) => void;
 }
 
 // Recherche d'artiste en cours, gardée en quittant l'onglet (fiche artiste, album, retour)
@@ -41,16 +45,37 @@ const TileGridSkeleton: React.FC<{ round?: boolean }> = ({ round }) => (
 export const MusicView: React.FC<MusicViewProps> = ({
   artistId,
   artistHint = null,
-  showPlaylists,
+  section,
   onSectionChange,
   onOpenArtist,
   onArtistBack,
   onOpenAlbum,
   onOpenPlaylist,
+  onOpenGenre,
 }) => {
-  const activeTab = showPlaylists ? "playlists" : "artists";
+  const activeTab = section ?? "artists";
   const artistList = usePagedList("artists", fetchMusicArtists);
   const { items: artists, totalSize, loading } = artistList;
+
+  // Genres (#50) : chargés à la première ouverture de l'onglet
+  const [genres, setGenres] = useState<MusicGenre[] | null>(null);
+  const [genresError, setGenresError] = useState(false);
+  const [genresTry, setGenresTry] = useState(0);
+  const playGenre = usePlayGenre();
+  useEffect(() => {
+    if (activeTab !== "genres" || genres) return;
+    let active = true;
+    setGenresError(false);
+    fetchMusicGenres()
+      .then((list) => active && setGenres(list))
+      .catch((e) => {
+        console.error(e);
+        if (active) setGenresError(true);
+      });
+    return () => {
+      active = false;
+    };
+  }, [activeTab, genres, genresTry]);
 
   // Barre de recherche réservée aux artistes : recherche approximative côté serveur (toute la
   // bibliothèque, pas seulement les artistes déjà affichés)
@@ -195,20 +220,23 @@ export const MusicView: React.FC<MusicViewProps> = ({
               : loading
                 ? "Chargement…"
                 : `${totalSize} artistes dans votre collection`
-            : `${playlists.length} ${playlists.length > 1 ? "playlists créées" : "playlist créée"}`
+            : activeTab === "genres"
+              ? "Des mixes tout faits, tirés au hasard dans chaque genre"
+              : `${playlists.length} ${playlists.length > 1 ? "playlists créées" : "playlist créée"}`
         }
       />
 
-      {/* Onglets Artistes / Playlists */}
+      {/* Onglets Artistes / Genres / Playlists */}
       <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
         <Pills
           label="Catégories musicales"
           options={[
             { id: "artists", label: "Artistes", count: totalSize || undefined },
+            { id: "genres", label: "Genres", count: genres?.length || undefined },
             { id: "playlists", label: "Playlists", count: playlists.length },
           ]}
           value={activeTab}
-          onChange={(tab) => onSectionChange(tab === "playlists")}
+          onChange={(tab) => onSectionChange(tab === "artists" ? undefined : tab)}
         />
 
         {activeTab === "playlists" && (
@@ -366,6 +394,35 @@ export const MusicView: React.FC<MusicViewProps> = ({
           )}
         </>
       )}
+
+      {/* Contenu onglet GENRES */}
+      {activeTab === "genres" &&
+        (genresError ? (
+          <div role="alert" className="py-16 text-center text-muted">
+            <p>Les genres arrivent dans un instant : la bibliothèque est en cours d'indexation.</p>
+            <button
+              type="button"
+              onClick={() => setGenresTry((n) => n + 1)}
+              className="press mt-4 inline-flex items-center gap-2 h-10 px-5 rounded-full bg-accent text-white text-sm font-semibold"
+            >
+              <RefreshCw className="w-4 h-4" />
+              Réessayer
+            </button>
+          </div>
+        ) : !genres ? (
+          <TileGridSkeleton />
+        ) : genres.length === 0 ? (
+          <div role="status" className="py-16 text-center text-muted max-w-md mx-auto">
+            Aucun genre trouvé : les genres viennent des dossiers de la bibliothèque musicale
+            (« Rap FR », « Reggae »…).
+          </div>
+        ) : (
+          <div className={`${TILE_GRID} anim-in`}>
+            {genres.map((genre) => (
+              <GenreTile key={genre.id} genre={genre} onOpen={(g) => onOpenGenre(g.id)} onPlay={playGenre} />
+            ))}
+          </div>
+        ))}
 
       {/* Contenu onglet PLAYLISTS */}
       {activeTab === "playlists" && (

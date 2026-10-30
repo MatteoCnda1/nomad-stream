@@ -18,7 +18,9 @@ import { transcodeRoutes } from "./routes/transcode.js";
 import { playbackRoutes } from "./routes/playback.js";
 import { searchRoutes } from "./routes/search.js";
 import { radioRoutes } from "./routes/radio.js";
+import { genreRoutes } from "./routes/genres.js";
 import { createLibrarySearch } from "./search.js";
+import { createMusicGenres, parseFolders } from "./genres.js";
 
 dotenv.config();
 
@@ -91,6 +93,12 @@ if (process.env.NOMAD_SEARCH_WARMUP !== "0") {
 }
 app.use(searchRoutes({ plex, librarySearch }));
 app.use(radioRoutes({ plex, librarySearch, cache: createMemoryCache({ maxEntries: 200 }) }));
+// Genres de la musique = dossiers de premier niveau ; NOMAD_MUSIC_GENRE_FOLDERS renomme ou écarte
+// ceux qui n'en sont pas ("Dossier=Genre,Fourre-tout=")
+app.use(genreRoutes({
+  librarySearch,
+  genres: createMusicGenres({ folders: parseFolders(process.env.NOMAD_MUSIC_GENRE_FOLDERS) }),
+}));
 app.use(streamRoutes({ plex }));
 app.use(imageRoutes({
   plex,

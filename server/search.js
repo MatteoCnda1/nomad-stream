@@ -162,7 +162,8 @@ function searchFields(raw) {
   };
 }
 
-export function buildIndex(rawItems) {
+// `musicRoots` : dossiers racine de la bibliothèque musicale (genres des titres, #50)
+export function buildIndex(rawItems, { musicRoots = [] } = {}) {
   const entries = [];
   const vocabulary = new Set();
   for (const raw of rawItems) {
@@ -180,9 +181,11 @@ export function buildIndex(rawItems) {
       fields,
       popularity: (raw.viewCount || 0) + Math.log10(1 + (raw.ratingCount || 0)),
       artistKey: raw.grandparentRatingKey, // titres : artiste (lecture continue)
+      // Titres : album et chemin du fichier chez Plex (genre = dossier), jamais envoyés au client
+      ...(raw.type === "track" && { albumKey: raw.parentRatingKey, file: raw.Media?.[0]?.Part?.[0]?.file }),
     });
   }
-  return { entries, vocabulary: [...vocabulary], builtAt: Date.now() };
+  return { entries, vocabulary: [...vocabulary], musicRoots, builtAt: Date.now() };
 }
 
 // Note d'un élément pour la recherche : la meilleure entre la correspondance du titre entier et
@@ -301,6 +304,14 @@ export function createLibrarySearch({ plexFetch, ttlMs = 15 * 60 * 1000 }) {
     }
   }
 
+  // Dossiers racine de la bibliothèque musicale : le genre d'un titre est le dossier juste en
+  // dessous (#50). Sans eux, la recherche marche quand même, mais sans genres
+  async function musicRoots() {
+    const data = await plexFetch("/library/sections");
+    const section = (data.MediaContainer?.Directory || []).find((d) => String(d.key) === String(SECTIONS.music));
+    return (section?.Location || []).map((l) => l.path).filter((p) => typeof p === "string" && p);
+  }
+
   function rebuild() {
     if (building) return building;
     const t0 = Date.now();
@@ -310,9 +321,14 @@ export function createLibrarySearch({ plexFetch, ttlMs = 15 * 60 * 1000 }) {
       fetchAll(SECTIONS.music, 8),
       fetchAll(SECTIONS.music, 9),
       fetchAll(SECTIONS.music, 10),
+      musicRoots().catch((e) => {
+        console.error("Dossiers de la musique :", e.message);
+        return [];
+      }),
     ])
       .then((lists) => {
-        index = buildIndex(lists.flat());
+        const roots = lists.pop();
+        index = buildIndex(lists.flat(), { musicRoots: roots });
         console.log(`🔎 Index de recherche : ${index.entries.length} éléments en ${Date.now() - t0} ms`);
         return index;
       })

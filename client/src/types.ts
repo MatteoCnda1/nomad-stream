@@ -93,6 +93,21 @@ export interface Playlist {
   coverArt?: string | null;
 }
 
+// Genre de la musique (#50) : un dossier de genre de la bibliothèque (« Rap FR », « Reggae »…)
+export interface MusicGenre {
+  id: string;
+  name: string;
+  trackCount: number;
+  artistCount: number;
+  covers: string[]; // pochettes des albums phares du genre, pour la mosaïque
+}
+
+// Mix tout fait : titres du genre tirés au hasard par la passerelle
+export interface GenreMix {
+  genre: MusicGenre;
+  items: MediaItem[];
+}
+
 export interface HubData {
   onDeck: MediaItem[];
   recentMovies: MediaItem[];

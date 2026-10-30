@@ -1,9 +1,10 @@
 import React, { useEffect, useState } from "react";
-import { HubData, MediaItem } from "../types";
-import { fetchHubs, prefetchMetadata } from "../api";
+import { HubData, MediaItem, MusicGenre } from "../types";
+import { fetchHubs, fetchMusicGenres, prefetchMetadata } from "../api";
 import { Plus, Check, Flame, Sparkles } from "lucide-react";
 import { useWishlist } from "../context/WishlistContext";
 import { MusicTile, PlayGlyph, PosterCard, SectionHeader, Sk } from "../components/ui";
+import { GenreTile, usePlayGenre } from "../components/GenreMixes";
 import { displayTitle, episodeCode, formatRuntime, resumeSubtitle } from "../utils/format";
 
 export type HomeFilter = "all" | "films" | "series" | "music";
@@ -14,6 +15,8 @@ interface HomeViewProps {
   onOpenMovie: (movieId: string) => void;
   onOpenShow: (showId: string) => void;
   onOpenAlbum: (albumId: string) => void;
+  onOpenGenre: (genreId: string) => void;
+  onOpenGenres: () => void;
   onNavigate: (tab: string) => void;
 }
 
@@ -58,13 +61,17 @@ export const HomeView: React.FC<HomeViewProps> = ({
   onOpenMovie,
   onOpenShow,
   onOpenAlbum,
+  onOpenGenre,
+  onOpenGenres,
   onNavigate,
 }) => {
   const [data, setData] = useState<HubData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [heroIndex, setHeroIndex] = useState(0);
+  const [genres, setGenres] = useState<MusicGenre[]>([]);
   const { isSaved, toggle } = useWishlist();
+  const playGenre = usePlayGenre();
 
   useEffect(() => {
     fetchHubs()
@@ -76,6 +83,10 @@ export const HomeView: React.FC<HomeViewProps> = ({
         setError(err.message);
         setLoading(false);
       });
+    // Mixes par genre (#50) : rangée absente tant que la bibliothèque n'est pas indexée
+    fetchMusicGenres()
+      .then(setGenres)
+      .catch(() => {});
   }, []);
 
   useEffect(() => setHeroIndex(0), [filter]);
@@ -317,6 +328,20 @@ export const HomeView: React.FC<HomeViewProps> = ({
                   sub={album.parentTitle || "Album"}
                   onClick={() => onOpenAlbum(album.id)}
                 />
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* MIXES PAR GENRE */}
+      {showMusic && genres.length > 0 && (
+        <section className="mt-8">
+          <SectionHeader title="Mixes par genre" onAction={onOpenGenres} className="mb-2" />
+          <div className={MUSIC_ROW}>
+            {genres.slice(0, 12).map((genre) => (
+              <div key={genre.id} className="flex-[0_0_160px] lg:flex-none">
+                <GenreTile genre={genre} onOpen={(g) => onOpenGenre(g.id)} onPlay={playGenre} />
               </div>
             ))}
           </div>

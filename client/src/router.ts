@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 export type Tab = "home" | "movies" | "shows" | "music" | "wishlist" | "account" | "downloads" | "car" | "search";
+export type MusicSection = "genres" | "playlists";
 
 export interface Route {
   tab: Tab;
@@ -13,7 +14,8 @@ export interface Route {
   albumId?: string;
   artistId?: string;
   playlistId?: string;
-  playlists?: boolean; // onglet « Playlists » de la musique
+  genreId?: string; // mix d'un genre (#50)
+  musicSection?: MusicSection; // onglet de la musique (absent = Artistes)
   sort?: string; // tri des listes Films / Séries (absent = tri par défaut)
   q?: string; // recherche
 }
@@ -56,7 +58,8 @@ export function parseRoute(pathname: string, search = ""): Route {
       if (sub === "album") return { tab: "music", albumId: id(arg) };
       if (sub === "artiste") return { tab: "music", artistId: id(arg) };
       if (sub === "playlist") return { tab: "music", playlistId: id(arg) };
-      return { tab: "music", playlists: sub === "playlists" };
+      if (sub === "genre") return { tab: "music", genreId: id(arg) };
+      return { tab: "music", musicSection: sub === "playlists" || sub === "genres" ? sub : undefined };
     case "recherche":
       return { tab: "search", q: params.get("q") ?? "" };
     case "ma-liste":
@@ -88,7 +91,8 @@ export function routePath(r: Route): string {
       if (r.albumId) return `/musique/album/${e(r.albumId)}`;
       if (r.artistId) return `/musique/artiste/${e(r.artistId)}`;
       if (r.playlistId) return `/musique/playlist/${e(r.playlistId)}`;
-      return r.playlists ? "/musique/playlists" : "/musique";
+      if (r.genreId) return `/musique/genre/${e(r.genreId)}`;
+      return r.musicSection ? `/musique/${r.musicSection}` : "/musique";
     case "search":
       return withQuery("/recherche", { q: r.q || undefined });
     default:
