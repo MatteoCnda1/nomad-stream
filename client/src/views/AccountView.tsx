@@ -1,9 +1,10 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Car, Heart, Smartphone, Monitor, Trash2, Check, Server } from "lucide-react";
 import { useServerStatus } from "../hooks/useServerStatus";
 import { useTheme, ThemeMode } from "../context/ThemeContext";
 import { useWishlist } from "../context/WishlistContext";
 import { clearApiCache } from "../api";
+import { clearPrefetched, prefetchUsage } from "../audioPrefetch";
 import { Avatar, Sk, ThemeToggle } from "../components/ui";
 import { useInstall } from "../hooks/useInstall";
 import { IOSInstallSteps } from "../components/InstallPrompt";
@@ -49,6 +50,15 @@ export const AccountView: React.FC<AccountViewProps> = ({ onNavigate }) => {
   const install = useInstall();
   const { entries } = useWishlist();
   const [cacheCleared, setCacheCleared] = useState(false);
+  // Musique préchargée pendant l'écoute (#56) : place occupée sur cet appareil
+  const [prefetched, setPrefetched] = useState<{ tracks: number; bytes: number } | null>(null);
+  useEffect(() => {
+    if (window.isSecureContext && "caches" in window) prefetchUsage().then(setPrefetched);
+  }, []);
+  const handleClearPrefetched = async () => {
+    await clearPrefetched();
+    setPrefetched({ tracks: 0, bytes: 0 });
+  };
 
   const isStandalone = window.matchMedia("(display-mode: standalone)").matches;
   const hasMediaSession = "mediaSession" in navigator;
@@ -192,6 +202,26 @@ export const AccountView: React.FC<AccountViewProps> = ({ onNavigate }) => {
                   ) : (
                     <IOSInstallSteps />
                   )}
+                </Row>
+              )}
+              {prefetched && (
+                <Row
+                  title="Musique préchargée"
+                  hint={
+                    prefetched.tracks === 0
+                      ? "Les titres à venir se téléchargent pendant l'écoute, pour ne pas couper quand le réseau faiblit"
+                      : `${prefetched.tracks} ${prefetched.tracks > 1 ? "titres" : "titre"} · ${Math.round(prefetched.bytes / 1e6)} Mo sur cet appareil (250 Mo au plus)`
+                  }
+                >
+                  <button
+                    type="button"
+                    onClick={handleClearPrefetched}
+                    disabled={prefetched.tracks === 0}
+                    aria-label="Vider la musique préchargée"
+                    className="press h-10 px-4 rounded-full border border-line2 text-sm font-semibold hover:bg-surface2 disabled:opacity-40"
+                  >
+                    Vider
+                  </button>
                 </Row>
               )}
               <Row title="Thème" hint="Enregistré sur cet appareil" last>

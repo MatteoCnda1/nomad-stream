@@ -1,6 +1,8 @@
 const CACHE_NAME = 'nomad-stream-v7';
 // Vidéos téléchargées (mode hors connexion) : ce cache n'est JAMAIS purgé lors des mises à jour
 const OFFLINE_CACHE = 'nomad-offline-v1';
+// Musique préchargée pendant l'écoute (#56, client/src/audioPrefetch.ts) : gardée aussi
+const AUDIO_CACHE = 'nomad-audio-v1';
 const STATIC_ASSETS = [
   '/',
   '/index.html',
@@ -24,7 +26,7 @@ self.addEventListener('activate', (event) => {
     caches.keys().then((keys) => {
       return Promise.all(
         keys.map((key) => {
-          if (key !== CACHE_NAME && key !== OFFLINE_CACHE) {
+          if (key !== CACHE_NAME && key !== OFFLINE_CACHE && key !== AUDIO_CACHE) {
             return caches.delete(key);
           }
         })
@@ -34,13 +36,15 @@ self.addEventListener('activate', (event) => {
   self.clients.claim();
 });
 
-// Sert une vidéo téléchargée, avec les requêtes partielles (Range) qu'exigent Safari et iOS
-async function serveOffline(request) {
-  const cache = await caches.open(OFFLINE_CACHE);
+// Sert une vidéo téléchargée ou un titre préchargé, avec les requêtes partielles (Range)
+// qu'exigent Safari et iOS
+async function serveCached(request, cacheName) {
+  const cache = await caches.open(cacheName);
   const cached = await cache.match(new URL(request.url).pathname);
-  if (!cached) return new Response('Vidéo non téléchargée', { status: 404 });
+  if (!cached) return new Response('Fichier absent du cache', { status: 404 });
   const range = request.headers.get('range');
   if (!range) return cached;
+  const type = cached.headers.get('content-type') || 'video/mp4';
 
   const blob = await cached.blob();
   const size = blob.size;
@@ -59,7 +63,7 @@ async function serveOffline(request) {
   return new Response(blob.slice(start, end + 1), {
     status: 206,
     headers: {
-      'Content-Type': 'video/mp4',
+      'Content-Type': type,
       'Content-Range': `bytes ${start}-${end}/${size}`,
       'Content-Length': String(end - start + 1),
       'Accept-Ranges': 'bytes'
@@ -70,9 +74,13 @@ async function serveOffline(request) {
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
 
-  // 1. Vidéos téléchargées
+  // 1. Vidéos téléchargées et musique préchargée
   if (url.origin === self.location.origin && url.pathname.startsWith('/offline/')) {
-    event.respondWith(serveOffline(event.request));
+    event.respondWith(serveCached(event.request, OFFLINE_CACHE));
+    return;
+  }
+  if (url.origin === self.location.origin && url.pathname.startsWith('/precharge/')) {
+    event.respondWith(serveCached(event.request, AUDIO_CACHE));
     return;
   }
 
