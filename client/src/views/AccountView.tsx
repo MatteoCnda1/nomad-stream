@@ -9,6 +9,7 @@ import { Avatar, Sk, ThemeToggle } from "../components/ui";
 import { useInstall } from "../hooks/useInstall";
 import { IOSInstallSteps } from "../components/InstallPrompt";
 import { EqualizerPanel } from "../components/EqualizerPanel";
+import { MAX_CROSSFADE, isIOS, setCrossfadeSeconds, useCrossfade } from "../crossfade";
 
 interface AccountViewProps {
   onNavigate: (tab: string) => void;
@@ -50,6 +51,7 @@ export const AccountView: React.FC<AccountViewProps> = ({ onNavigate }) => {
   const { mode, setMode } = useTheme();
   const install = useInstall();
   const { entries } = useWishlist();
+  const crossfade = useCrossfade();
   const [cacheCleared, setCacheCleared] = useState(false);
   // Musique préchargée pendant l'écoute (#56) : place occupée sur cet appareil
   const [prefetched, setPrefetched] = useState<{ tracks: number; bytes: number } | null>(null);
@@ -276,6 +278,40 @@ export const AccountView: React.FC<AccountViewProps> = ({ onNavigate }) => {
           {/* Égaliseur de la musique */}
           <Card labelledBy="eq-h" className="col-span-12 xl:col-span-7">
             <EqualizerPanel />
+          </Card>
+
+          {/* Lecture : fondu enchaîné (#59) */}
+          <Card labelledBy="play-h" className="col-span-12 xl:col-span-5">
+            <h2 id="play-h" className="text-lg font-semibold">Lecture</h2>
+            <div className="mt-2">
+              <Row
+                title="Fondu enchaîné"
+                hint="Le titre suivant monte pendant que la fin du titre en cours baisse. Jamais entre deux titres qui se suivent sur un album."
+                last
+              >
+                <div className="w-full flex items-center gap-3">
+                  <input
+                    id="crossfade"
+                    type="range"
+                    min={0}
+                    max={MAX_CROSSFADE}
+                    step={1}
+                    value={crossfade}
+                    onChange={(e) => setCrossfadeSeconds(Number(e.target.value))}
+                    aria-label="Durée du fondu enchaîné"
+                    aria-valuetext={crossfade ? `${crossfade} secondes` : "Désactivé"}
+                    className="flex-1 min-w-0 accent-accent"
+                  />
+                  <span className="w-[76px] text-right text-[15px] tabular-nums">{crossfade ? `${crossfade} s` : "Désactivé"}</span>
+                </div>
+              </Row>
+              {isIOS && (
+                <p className="text-[13px] text-muted">
+                  Sur iPhone et iPad, le fondu fait passer la musique par le moteur audio du navigateur. Si elle
+                  s'arrête écran verrouillé ou dans la voiture, remettez « Désactivé » puis fermez et rouvrez l'appli.
+                </p>
+              )}
+            </div>
           </Card>
         </div>
       )}

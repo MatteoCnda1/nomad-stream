@@ -130,9 +130,18 @@ function apply() {
   graph.preamp.gain.setTargetAtTime(Math.pow(10, -boost / 2 / 20), now, 0.02);
 }
 
+// La chaîne sert aussi au fondu enchaîné sur iPhone (#59), où le volume des éléments est ignoré
+let graphNeeded = false;
+export function setGraphNeeded(needed: boolean) {
+  graphNeeded = needed;
+}
+
+// Gain d'entrée d'un lecteur s'il passe par la chaîne (niveaux du fondu enchaîné)
+export const inputGain = (el: HTMLAudioElement) => graph?.inputs.get(el) ?? null;
+
 // À appeler lors d'un geste de l'utilisateur (lecture) : un AudioContext ne démarre qu'ainsi
 export function resumeEqualizer() {
-  if (settings.enabled) ensureGraph();
+  if (settings.enabled || graphNeeded) ensureGraph();
   if (graph && graph.ctx.state !== "running") graph.ctx.resume().catch(() => {});
 }
 
