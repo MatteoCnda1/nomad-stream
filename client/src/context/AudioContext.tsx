@@ -11,6 +11,15 @@ import {
   setPrefetchWanted,
 } from "../audioPrefetch";
 import { registerAudioElement, resumeEqualizer } from "../equalizer";
+import {
+  crossfadeSeconds,
+  fadeIn,
+  fadeOut,
+  primeDeck,
+  sameAlbumInOrder,
+  setLevel,
+  setUserVolume,
+} from "../crossfade";
 
 export type RepeatMode = "all" | "one" | "off";
 
@@ -67,7 +76,13 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
   const [repeatMode, setRepeatMode] = useState<RepeatMode>("off");
   const [shuffleMode, setShuffleMode] = useState(false);
 
+  // Deux lecteurs pour le fondu enchaîné (#59) : audioRef désigne celui du titre en cours, que
+  // suivent l'interface, l'écran verrouillé et le suivi Plex ; l'autre prépare le titre suivant
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const decksRef = useRef<HTMLAudioElement[]>([]);
+  const fadeRef = useRef<{ out: HTMLAudioElement; inc: HTMLAudioElement; seconds: number; raf: number } | null>(null);
+  const fadeStartingRef = useRef(false); // titre suivant en cours de démarrage pour un fondu
+  const fadeGenRef = useRef(0); // un démarrage devenu inutile (geste de l'utilisateur) est abandonné
   const queueRef = useRef<MediaItem[]>([]);
   const queueIndexRef = useRef<number>(0);
   const currentTrackRef = useRef<MediaItem | null>(null);
@@ -92,11 +107,92 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
     repeatModeRef.current = repeatMode;
   }, [repeatMode]);
 
+  // --- Fondu enchaîné (#59) ---
+
+  // Termine net le fondu (fin normale, ou geste de l'utilisateur) : l'ancien titre s'arrête, le
+  // nouveau passe à plein volume. Un titre suivant en train de démarrer est abandonné.
+  const finishFade = useCallback(() => {
+    fadeGenRef.current++;
+    fadeStartingRef.current = false;
+    const f = fadeRef.current;
+    if (!f) return;
+    fadeRef.current = null;
+    cancelAnimationFrame(f.raf);
+    f.out.pause();
+    f.out.removeAttribute("src");
+    f.out.load();
+    setLevel(f.out, 1);
+    setLevel(f.inc, 1);
+  }, []);
+
+  // Volumes croisés selon l'avancée du nouveau titre. Appelé à chaque image quand l'appli est à
+  // l'écran, et à chaque `timeupdate` sinon (les animations s'arrêtent en arrière-plan)
+  const stepFade = useCallback(() => {
+    const f = fadeRef.current;
+    if (!f) return;
+    const p = f.inc.currentTime / f.seconds;
+    if (p >= 1 || f.out.ended) return finishFade();
+    setLevel(f.inc, fadeIn(p));
+    setLevel(f.out, fadeOut(p));
+  }, [finishFade]);
+
+  // Démarre le titre suivant sur l'autre lecteur, à volume nul ; dès qu'il joue, il devient le
+  // titre en cours et les volumes se croisent jusqu'à la fin de l'ancien
+  const startCrossfade = useCallback(
+    (next: MediaItem, nextIndex: number) => {
+      const out = audioRef.current;
+      const inc = decksRef.current.find((d) => d !== out);
+      if (!out || !inc) return;
+      fadeStartingRef.current = true;
+      const gen = ++fadeGenRef.current;
+      const seconds = Math.max(1, Math.min(crossfadeSeconds(), out.duration - out.currentTime));
+      setLevel(inc, 0);
+      inc.src = audioSource(next);
+      inc.currentTime = 0;
+      inc
+        .play()
+        .then(() => {
+          if (gen !== fadeGenRef.current || audioRef.current !== out || out.paused) {
+            inc.pause();
+            inc.removeAttribute("src");
+            inc.load();
+            setLevel(inc, 1);
+            return;
+          }
+          audioRef.current = inc;
+          setQueueIndex(nextIndex);
+          queueIndexRef.current = nextIndex;
+          setCurrentTrack(next);
+          currentTrackRef.current = next;
+          setDuration(isFinite(inc.duration) ? inc.duration : next.duration / 1000);
+          setCurrentTime(inc.currentTime);
+          setIsPlaying(true);
+          fadeRef.current = { out, inc, seconds, raf: 0 };
+          const loop = () => {
+            stepFade();
+            if (fadeRef.current?.inc === inc) fadeRef.current.raf = requestAnimationFrame(loop);
+          };
+          loop();
+        })
+        .catch((err) => {
+          // Démarrage refusé (iPhone : lecteur jamais lancé par un geste) : enchaînement normal à
+          // la fin du titre, sans nouvel essai pour celui-ci
+          console.warn("Fondu enchaîné impossible :", err);
+          if (gen !== fadeGenRef.current) return;
+          inc.removeAttribute("src");
+          inc.load();
+          setLevel(inc, 1);
+        });
+    },
+    [stepFade],
+  );
+
   // Jouer une piste directement à un index de la file actuelle
   const playAtIndex = useCallback((targetIndex: number) => {
     const q = queueRef.current;
     if (targetIndex < 0 || targetIndex >= q.length) return;
     const track = q[targetIndex];
+    finishFade();
 
     setQueueIndex(targetIndex);
     queueIndexRef.current = targetIndex;
@@ -111,7 +207,7 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
         console.warn("Échec autoplay audio :", err);
       });
     }
-  }, []);
+  }, [finishFade]);
 
   // Lecture continue (#24) : des titres proches du dernier de la file sont ajoutés à sa suite,
   // marqués « autoplay ». Résout à true si des titres ont été ajoutés.
@@ -156,16 +252,19 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
 
   const nextTrack = advance;
 
-  // Initialisation de l'élément Audio et de ses écouteurs
+  // Initialisation des deux lecteurs et de leurs écouteurs. Les événements de l'autre lecteur
+  // (titre qui s'éteint, titre suivant qui démarre) ne touchent pas à l'état du lecteur.
   useEffect(() => {
-    const audio = new Audio();
-    audioRef.current = audio;
-    registerAudioElement(audio); // égaliseur : branché à la première lecture s'il est activé
+    const decks = [new Audio(), new Audio()];
+    decksRef.current = decks;
+    audioRef.current = decks[0];
+    decks.forEach(registerAudioElement); // égaliseur : branché à la première lecture s'il est activé
 
     // Préchargement (#56) : pas tant que le titre en cours, lu en flux, a moins de 30 s d'avance
     // (ou n'est pas chargé jusqu'au bout) : il garde la priorité sur le débit
     setPrefetchGate(() => {
-      if (!audio.src || isPrecharge(audio.src)) return true;
+      const audio = audioRef.current;
+      if (!audio || !audio.src || isPrecharge(audio.src)) return true;
       const t = audio.currentTime;
       const end = isFinite(audio.duration) ? audio.duration : Infinity;
       for (let i = 0; i < audio.buffered.length; i++) {
@@ -175,7 +274,7 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
     });
 
     // Reprend le titre en cours à la même position depuis une autre source
-    const resumeFrom = (src: string, at: number) => {
+    const resumeFrom = (audio: HTMLAudioElement, src: string, at: number) => {
       audio.src = src;
       audio.addEventListener(
         "loadedmetadata",
@@ -187,8 +286,30 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
       );
     };
 
+    // Écouteur réservé au lecteur du titre en cours
+    const own = (handler: (audio: HTMLAudioElement) => void) => (e: Event) => {
+      if (e.currentTarget === audioRef.current) handler(e.currentTarget as HTMLAudioElement);
+    };
+
+    // Fondu enchaîné (#59) : quelques secondes avant la fin, le titre suivant démarre sur l'autre
+    // lecteur. Pas de fondu en répétant un titre, ni entre deux titres qui se suivent sur un album,
+    // ni sur un titre trop court ; en fin de file, la lecture continue enchaîne comme avant.
+    const maybeCrossfade = (audio: HTMLAudioElement) => {
+      const seconds = crossfadeSeconds();
+      if (!seconds || fadeRef.current || fadeStartingRef.current || audio.paused) return;
+      if (repeatModeRef.current === "one" || !isFinite(audio.duration)) return;
+      if (audio.duration < 2 * seconds + 5 || audio.duration - audio.currentTime > seconds) return;
+      const q = queueRef.current;
+      const idx = queueIndexRef.current;
+      const nextIndex = idx + 1 < q.length ? idx + 1 : repeatModeRef.current === "all" && q.length > 1 ? 0 : -1;
+      const current = currentTrackRef.current;
+      const next = q[nextIndex];
+      if (!next || !current || sameAlbumInOrder(current, next)) return;
+      startCrossfade(next, nextIndex);
+    };
+
     let lastKick = 0;
-    const handleTimeUpdate = () => {
+    const handleTimeUpdate = own((audio) => {
       setCurrentTime(audio.currentTime);
       if (Math.abs(audio.currentTime - lastKick) >= 5) {
         lastKick = audio.currentTime;
@@ -205,24 +326,25 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
           // Ignore
         }
       }
-    };
+      maybeCrossfade(audio);
+    });
 
-    const handleLoadedMetadata = () => {
+    const handleLoadedMetadata = own((audio) => {
       setDuration(audio.duration);
-    };
+    });
 
-    const handlePlay = () => {
+    const handlePlay = own(() => {
       resumeEqualizer(); // lecture relancée hors de l'appli (écran verrouillé, CarPlay)
       setIsPlaying(true);
       if ("mediaSession" in navigator) navigator.mediaSession.playbackState = "playing";
-    };
-    const handlePause = () => {
+    });
+    const handlePause = own(() => {
       setIsPlaying(false);
       if ("mediaSession" in navigator) navigator.mediaSession.playbackState = "paused";
-    };
+    });
 
     // GESTION CRITIQUE DU PASSAGE AUTOMATIQUE AU TITRE SUIVANT
-    const handleEnded = () => {
+    const handleEnded = own((audio) => {
       const q = queueRef.current;
       const idx = queueIndexRef.current;
       const repeat = repeatModeRef.current;
@@ -235,64 +357,62 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
 
       if (q.length === 0 || idx < 0) return;
       advance();
-    };
+    });
 
     // Tolérance aux pannes réseau : passer automatiquement au morceau suivant après 400ms si erreur
     // de flux, mais pas indéfiniment (serveur injoignable : chaque titre échouerait à son tour)
     let errorStreak = 0;
-    const handleError = () => {
+    const handleError = own((audio) => {
       const track = currentTrackRef.current;
       const at = audio.currentTime || 0;
       if (track && isPrecharge(audio.src)) {
         // Copie préchargée illisible (effacée par le navigateur) : le flux prend le relais, même titre
         console.warn("Copie préchargée illisible, retour au flux");
         forgetPrefetched(track);
-        resumeFrom(audioSource(track), at);
+        resumeFrom(audio, audioSource(track), at);
         return;
       }
       if (track && isPrefetched(track)) {
         // Flux coupé (réseau perdu) alors que le titre est déjà dans le cache : on continue dessus
-        resumeFrom(audioSource(track), at);
+        resumeFrom(audio, audioSource(track), at);
         return;
       }
       console.warn("Erreur de lecture audio, tentative de reprise sur la piste suivante…");
       if (++errorStreak <= 5) window.setTimeout(advance, 400);
-    };
-    const handlePlaying = () => {
+    });
+    const handlePlaying = own(() => {
       errorStreak = 0;
       kickPrefetch();
-    };
+    });
 
     // Le flux s'arrête faute de débit, mais le titre est déjà dans le cache : on y passe
-    const handleWaiting = () => {
+    const handleWaiting = own((audio) => {
       const track = currentTrackRef.current;
       if (!track || isPrecharge(audio.src) || !isPrefetched(track)) return;
-      resumeFrom(audioSource(track), audio.currentTime);
-    };
+      resumeFrom(audio, audioSource(track), audio.currentTime);
+    });
 
-    audio.addEventListener("timeupdate", handleTimeUpdate);
-    audio.addEventListener("loadedmetadata", handleLoadedMetadata);
-    audio.addEventListener("ended", handleEnded);
-    audio.addEventListener("play", handlePlay);
-    audio.addEventListener("pause", handlePause);
-    audio.addEventListener("error", handleError);
-    audio.addEventListener("playing", handlePlaying);
-    audio.addEventListener("waiting", handleWaiting);
-    audio.addEventListener("progress", kickPrefetch);
+    const listeners: [string, EventListener][] = [
+      ["timeupdate", handleTimeUpdate],
+      ["timeupdate", stepFade], // fondu en arrière-plan, sur les deux lecteurs
+      ["loadedmetadata", handleLoadedMetadata],
+      ["ended", handleEnded],
+      ["play", handlePlay],
+      ["pause", handlePause],
+      ["error", handleError],
+      ["playing", handlePlaying],
+      ["waiting", handleWaiting],
+      ["progress", kickPrefetch],
+    ];
+    for (const deck of decks) for (const [type, fn] of listeners) deck.addEventListener(type, fn);
 
     return () => {
-      audio.pause();
-      audio.removeEventListener("waiting", handleWaiting);
-      audio.removeEventListener("progress", kickPrefetch);
-      audio.removeEventListener("timeupdate", handleTimeUpdate);
-      audio.removeEventListener("loadedmetadata", handleLoadedMetadata);
-      audio.removeEventListener("ended", handleEnded);
-      audio.removeEventListener("play", handlePlay);
-      audio.removeEventListener("pause", handlePause);
-      audio.removeEventListener("error", handleError);
-      audio.removeEventListener("playing", handlePlaying);
+      for (const deck of decks) {
+        deck.pause();
+        for (const [type, fn] of listeners) deck.removeEventListener(type, fn);
+      }
     };
-  }, [advance]);
+  }, [advance, startCrossfade, stepFade]);
 
   // Dernier titre de la file entamé : la suite est préparée à l'avance (visible dans « À suivre »)
   useEffect(() => {
@@ -392,6 +512,7 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
   // bouge pas ; le titre y est rejoint s'il y est déjà, sinon inséré juste après le titre en cours.
   const playTrack = useCallback((track: MediaItem, newQueue?: MediaItem[], startIndex?: number) => {
     if (!audioRef.current) return;
+    finishFade();
 
     if (newQueue && newQueue.length > 0) {
       setQueue(newQueue);
@@ -429,41 +550,50 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
     setCurrentTrack(track);
     currentTrackRef.current = track;
 
-    audioRef.current.src = audioSource(track);
-    audioRef.current.currentTime = 0;
-    resumeEqualizer(); // geste de l'utilisateur : le moteur audio de l'égaliseur peut démarrer
-    audioRef.current.play().catch((err) => console.log("Audio autoplay prevented:", err));
-  }, []);
+    const audio = audioRef.current;
+    audio.src = audioSource(track);
+    audio.currentTime = 0;
+    // Geste de l'utilisateur : le moteur audio (égaliseur, fondu) peut démarrer, et l'autre lecteur
+    // est débloqué pour pouvoir lancer seul le titre suivant (fondu enchaîné sur iPhone)
+    resumeEqualizer();
+    audio.play().catch((err) => console.log("Audio autoplay prevented:", err));
+    decksRef.current.forEach((d) => d !== audio && primeDeck(d));
+  }, [finishFade]);
 
   const pauseTrack = useCallback(() => {
     if (audioRef.current) {
+      finishFade();
       audioRef.current.pause();
       setIsPlaying(false);
     }
-  }, []);
+  }, [finishFade]);
 
   const togglePlay = useCallback(() => {
     const audio = audioRef.current;
     if (!audio) return;
     if (!audio.paused) {
+      finishFade();
       audio.pause();
     } else {
       resumeEqualizer();
       audio.play().catch((e) => console.log(e));
+      decksRef.current.forEach((d) => d !== audio && primeDeck(d));
     }
-  }, []);
+  }, [finishFade]);
 
   const setVolume = useCallback((value: number) => {
     const v = Math.min(1, Math.max(0, value));
-    if (audioRef.current) audioRef.current.volume = v;
+    setUserVolume(v);
+    if (!fadeRef.current) decksRef.current.forEach((d) => setLevel(d, 1));
     setVolumeState(v);
   }, []);
 
   const seek = useCallback((seconds: number) => {
     if (!audioRef.current) return;
+    finishFade();
     audioRef.current.currentTime = seconds;
     setCurrentTime(seconds);
-  }, []);
+  }, [finishFade]);
 
   // Avance ou recul relatif (boutons ±15 s), sans que l'appelant ait à lire la position
   const seekBy = useCallback(
