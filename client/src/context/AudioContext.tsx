@@ -1,6 +1,15 @@
 import React, { createContext, useContext, useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { MediaItem } from "../types";
 import { fetchRadio, reportTimeline } from "../api";
+import {
+  audioSource,
+  forgetPrefetched,
+  isPrecharge,
+  isPrefetched,
+  kickPrefetch,
+  setPrefetchGate,
+  setPrefetchWanted,
+} from "../audioPrefetch";
 
 export type RepeatMode = "all" | "one" | "off";
 
@@ -94,8 +103,8 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
     currentTrackRef.current = track;
 
     if (audioRef.current) {
-      const streamUrl = track.streamUrl || `/api/stream/audio?key=${encodeURIComponent(track.partKey || "")}`;
-      audioRef.current.src = streamUrl;
+      // Copie préchargée (#56) si elle est prête : démarrage sans attendre le réseau
+      audioRef.current.src = audioSource(track);
       audioRef.current.currentTime = 0;
       audioRef.current.play().catch((err) => {
         console.warn("Échec autoplay audio :", err);
@@ -151,8 +160,38 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
     const audio = new Audio();
     audioRef.current = audio;
 
+    // Préchargement (#56) : pas tant que le titre en cours, lu en flux, a moins de 30 s d'avance
+    // (ou n'est pas chargé jusqu'au bout) : il garde la priorité sur le débit
+    setPrefetchGate(() => {
+      if (!audio.src || isPrecharge(audio.src)) return true;
+      const t = audio.currentTime;
+      const end = isFinite(audio.duration) ? audio.duration : Infinity;
+      for (let i = 0; i < audio.buffered.length; i++) {
+        if (audio.buffered.start(i) <= t + 0.5 && audio.buffered.end(i) >= Math.min(t + 30, end - 0.5)) return true;
+      }
+      return false;
+    });
+
+    // Reprend le titre en cours à la même position depuis une autre source
+    const resumeFrom = (src: string, at: number) => {
+      audio.src = src;
+      audio.addEventListener(
+        "loadedmetadata",
+        () => {
+          audio.currentTime = at;
+          audio.play().catch(console.error);
+        },
+        { once: true },
+      );
+    };
+
+    let lastKick = 0;
     const handleTimeUpdate = () => {
       setCurrentTime(audio.currentTime);
+      if (Math.abs(audio.currentTime - lastKick) >= 5) {
+        lastKick = audio.currentTime;
+        kickPrefetch();
+      }
       if ("mediaSession" in navigator && audio.duration && !isNaN(audio.duration)) {
         try {
           navigator.mediaSession.setPositionState({
@@ -199,11 +238,33 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
     // de flux, mais pas indéfiniment (serveur injoignable : chaque titre échouerait à son tour)
     let errorStreak = 0;
     const handleError = () => {
+      const track = currentTrackRef.current;
+      const at = audio.currentTime || 0;
+      if (track && isPrecharge(audio.src)) {
+        // Copie préchargée illisible (effacée par le navigateur) : le flux prend le relais, même titre
+        console.warn("Copie préchargée illisible, retour au flux");
+        forgetPrefetched(track);
+        resumeFrom(audioSource(track), at);
+        return;
+      }
+      if (track && isPrefetched(track)) {
+        // Flux coupé (réseau perdu) alors que le titre est déjà dans le cache : on continue dessus
+        resumeFrom(audioSource(track), at);
+        return;
+      }
       console.warn("Erreur de lecture audio, tentative de reprise sur la piste suivante…");
       if (++errorStreak <= 5) window.setTimeout(advance, 400);
     };
     const handlePlaying = () => {
       errorStreak = 0;
+      kickPrefetch();
+    };
+
+    // Le flux s'arrête faute de débit, mais le titre est déjà dans le cache : on y passe
+    const handleWaiting = () => {
+      const track = currentTrackRef.current;
+      if (!track || isPrecharge(audio.src) || !isPrefetched(track)) return;
+      resumeFrom(audioSource(track), audio.currentTime);
     };
 
     audio.addEventListener("timeupdate", handleTimeUpdate);
@@ -213,9 +274,13 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
     audio.addEventListener("pause", handlePause);
     audio.addEventListener("error", handleError);
     audio.addEventListener("playing", handlePlaying);
+    audio.addEventListener("waiting", handleWaiting);
+    audio.addEventListener("progress", kickPrefetch);
 
     return () => {
       audio.pause();
+      audio.removeEventListener("waiting", handleWaiting);
+      audio.removeEventListener("progress", kickPrefetch);
       audio.removeEventListener("timeupdate", handleTimeUpdate);
       audio.removeEventListener("loadedmetadata", handleLoadedMetadata);
       audio.removeEventListener("ended", handleEnded);
@@ -231,6 +296,22 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
     if (!currentTrack || repeatMode !== "off") return;
     if (queueRef.current.length - 1 - queueIndexRef.current <= 0) extendWithRadio();
   }, [currentTrack, repeatMode, extendWithRadio]);
+
+  // Titres à précharger (#56), dans l'ordre où ils vont passer : le suivant d'abord (il démarrera
+  // sans réseau), puis le titre en cours (filet en cas de coupure), puis celui d'après. Mode
+  // « économie de données » du téléphone : le suivant seulement.
+  useEffect(() => {
+    if (!currentTrack) return setPrefetchWanted([]);
+    const after = (k: number) => {
+      const i = queueIndex + k;
+      if (i < queue.length) return queue[i];
+      return repeatMode === "all" && queue.length ? queue[i % queue.length] : null;
+    };
+    const saveData = (navigator as Navigator & { connection?: { saveData?: boolean } }).connection?.saveData;
+    const wanted =
+      repeatMode === "one" ? [currentTrack] : saveData ? [after(1)] : [after(1), currentTrack, after(2)];
+    setPrefetchWanted(wanted.filter((t): t is MediaItem => !!t));
+  }, [currentTrack, queue, queueIndex, repeatMode]);
 
   // Configuration MediaSession (CarPlay, Android Auto, Écran de verrouillage iOS)
   useEffect(() => {
@@ -343,8 +424,7 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
     setCurrentTrack(track);
     currentTrackRef.current = track;
 
-    const streamUrl = track.streamUrl || `/api/stream/audio?key=${encodeURIComponent(track.partKey || "")}`;
-    audioRef.current.src = streamUrl;
+    audioRef.current.src = audioSource(track);
     audioRef.current.currentTime = 0;
     audioRef.current.play().catch((err) => console.log("Audio autoplay prevented:", err));
   }, []);
