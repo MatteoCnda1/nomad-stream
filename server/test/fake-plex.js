@@ -24,18 +24,33 @@ const artist = (id, title, genres = [], similar = []) => ({
   Similar: similar.map((tag) => ({ tag })),
 });
 const ARTIST_IDS = { "Daft Punk": 100, "Beyoncé": 101, "AC/DC": 102, Justice: 103, "Kavinsky": 104 };
+// Bibliothèque rangée par genre, comme celle de la maison : /media/Music/<genre>/<artiste>/<album>/
+export const MUSIC_ROOT = "/media/Music";
+const FOLDERS = { "Daft Punk": "Electro", Justice: "Electro", Kavinsky: "Electro", "AC/DC": "Rock", "Beyoncé": "R&B" };
+const ALBUM_IDS = { "Random Access Memories": 110, "Highway to Hell": 111 };
 const album = (id, title, artistName) => ({ ratingKey: String(id), type: "album", title, parentTitle: artistName });
-const track = (id, title, artistName, albumName, viewCount = 0) => ({
-  ratingKey: String(id),
-  type: "track",
-  title,
-  grandparentTitle: artistName,
-  grandparentRatingKey: String(ARTIST_IDS[artistName]),
-  parentTitle: albumName,
-  viewCount,
-  duration: 240_000,
-  Media: [{ Part: [{ id: 1000 + id, key: `/library/parts/${1000 + id}/file.mp3` }] }],
-});
+const track = (id, title, artistName, albumName, viewCount = 0) => {
+  const albumId = ALBUM_IDS[albumName] ?? 200 + id;
+  return {
+    ratingKey: String(id),
+    type: "track",
+    title,
+    grandparentTitle: artistName,
+    grandparentRatingKey: String(ARTIST_IDS[artistName]),
+    parentTitle: albumName,
+    parentRatingKey: String(albumId),
+    parentThumb: `/library/metadata/${albumId}/thumb/1700000000`,
+    viewCount,
+    duration: 240_000,
+    Media: [{
+      Part: [{
+        id: 1000 + id,
+        key: `/library/parts/${1000 + id}/file.mp3`,
+        file: `${MUSIC_ROOT}/${FOLDERS[artistName]}/${artistName}/${albumName}/${title}.mp3`,
+      }],
+    }],
+  };
+};
 export const MUSIC = {
   8: [
     artist(100, "Daft Punk", ["Electronic"], ["Justice", "Inconnu au bataillon"]),
@@ -69,6 +84,14 @@ function respond(url, res) {
   };
   const p = url.pathname;
   if (p === "/") return json({ friendlyName: "Faux Plex", version: "1.0.0" });
+  if (p === "/library/sections") {
+    return json({
+      Directory: [
+        { key: "1", type: "movie", title: "Films", Location: [{ path: "/media/Films" }] },
+        { key: "5", type: "artist", title: "Musique", Location: [{ path: MUSIC_ROOT }] },
+      ],
+    });
+  }
   if (p === "/library/sections/1/all") return json({ totalSize: 2, Metadata: [movie(1, "Alpha"), movie(2, "Bravo")] });
   if (p === "/library/sections/2/all") return json({ totalSize: 0, Metadata: [] });
   if (p === "/library/sections/5/all") {

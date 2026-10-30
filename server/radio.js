@@ -29,6 +29,10 @@ function musicOf(index) {
 
 export const trackOf = (index, id) => musicOf(index).byId.get(id);
 
+// Un même morceau sur plusieurs albums (single, album, compilation) : même clé
+export const songKey = (track) =>
+  `${normalize(track.grandparentTitle)}|${normalize(track.title.replace(/\s*[([].*$/, ""))}`;
+
 // Ordre de tirage : jamais deux titres du même artiste d'affilée quand c'est possible, et
 // alternance des sources pour que la suite reste variée
 const PATTERN = ["similar", "genre", "same", "similar", "genre", "any"];
@@ -56,11 +60,10 @@ export function pickRadio(index, { seed, similar = [], exclude = [], limit = 20,
   const excluded = new Set(exclude);
   if (seed) excluded.add(seed);
   // Le même morceau sur plusieurs albums (single, album, compilation) ne revient pas
-  const songKey = (e) => `${normalize(e.item.grandparentTitle)}|${normalize(e.item.title.replace(/\s*[([].*$/, ""))}`;
-  const seen = new Set(seedEntry ? [songKey(seedEntry)] : []);
+  const seen = new Set(seedEntry ? [songKey(seedEntry.item)] : []);
   for (const id of excluded) {
     const e = byId.get(id);
-    if (e) seen.add(songKey(e));
+    if (e) seen.add(songKey(e.item));
   }
 
   const picked = [];
@@ -75,7 +78,7 @@ export function pickRadio(index, { seed, similar = [], exclude = [], limit = 20,
       for (let attempt = 0; attempt < 12 && !choice; attempt++) {
         const e = pool[Math.floor(random() * pool.length)];
         const artist = normalize(e.item.grandparentTitle);
-        if (excluded.has(e.item.id) || seen.has(songKey(e))) continue;
+        if (excluded.has(e.item.id) || seen.has(songKey(e.item))) continue;
         if (artist === lastArtist && attempt < 8) continue;
         choice = e;
       }
@@ -84,7 +87,7 @@ export function pickRadio(index, { seed, similar = [], exclude = [], limit = 20,
     if (!choice) continue;
     picked.push(choice.item);
     excluded.add(choice.item.id);
-    seen.add(songKey(choice));
+    seen.add(songKey(choice.item));
     lastArtist = normalize(choice.item.grandparentTitle);
   }
   return picked;

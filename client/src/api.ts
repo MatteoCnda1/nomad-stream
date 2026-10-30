@@ -1,4 +1,4 @@
-import { HubData, MediaItem, MediaDetail, ShowDetail, ArtistDetail, AlbumDetail, SearchResults } from "./types";
+import { HubData, MediaItem, MediaDetail, ShowDetail, ArtistDetail, AlbumDetail, SearchResults, MusicGenre, GenreMix } from "./types";
 
 const BASE_URL = "";
 
@@ -126,6 +126,18 @@ export async function fetchRadio(seedId: string, excludeIds: string[], limit = 2
   const res = await fetch(`${BASE_URL}/api/music/radio?${params}`);
   if (!res.ok) throw new Error(`HTTP Error [${res.status}]`);
   return (await res.json()).items;
+}
+
+// Genres de la musique (#50) : les dossiers de genre de la bibliothèque, avec leur mosaïque
+export async function fetchMusicGenres(): Promise<MusicGenre[]> {
+  return (await cachedFetch<{ items: MusicGenre[] }>(`${BASE_URL}/api/music/genres`, 300000)).items;
+}
+
+// Mix tout fait d'un genre : un nouveau tirage à chaque appel
+export async function fetchGenreMix(genreId: string, limit = 100): Promise<GenreMix> {
+  const res = await fetch(`${BASE_URL}/api/music/genres/${encodeURIComponent(genreId)}/mix?limit=${limit}`);
+  if (!res.ok) throw new Error(res.status === 503 ? "Bibliothèque en cours d'indexation" : `HTTP Error [${res.status}]`);
+  return res.json();
 }
 
 // Barre de recherche de l'onglet Musique : artistes seulement (recherche approximative)

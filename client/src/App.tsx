@@ -16,6 +16,7 @@ import { ShowDetailView } from "./views/ShowDetailView";
 import { MusicView } from "./views/MusicView";
 import { AlbumDetailView } from "./views/AlbumDetailView";
 import { PlaylistDetailView } from "./views/PlaylistDetailView";
+import { GenreMixView } from "./views/GenreMixView";
 import { PlaylistModal } from "./components/PlaylistModal";
 import { GlobalToast } from "./components/GlobalToast";
 import { InstallPrompt } from "./components/InstallPrompt";
@@ -133,6 +134,7 @@ const Shell: React.FC = () => {
   const handleOpenShow = (showId: string) => navigate({ tab: "shows", showId });
   const handleOpenAlbum = (albumId: string) => navigate({ tab: "music", albumId });
   const handleOpenPlaylist = (playlistId: string) => navigate({ tab: "music", playlistId });
+  const handleOpenGenre = (genreId: string) => navigate({ tab: "music", genreId });
   const handleOpenArtist = (artist: MediaItem) => {
     artistHintRef.current = artist;
     navigate({ tab: "music", artistId: artist.id });
@@ -159,7 +161,7 @@ const Shell: React.FC = () => {
     navigate({ tab: sortTab, sort: sort === DEFAULT_SORT ? undefined : sort }, { replace: true, scroll: "top" });
 
   // Les fiches détaillées affichent leur propre en-tête plein écran sur mobile
-  const isDetail = !!(route.movieId || route.showId || route.albumId || route.artistId || route.playlistId);
+  const isDetail = !!(route.movieId || route.showId || route.albumId || route.artistId || route.playlistId || route.genreId);
   const hideMobileHeader = isDetail || ["search", "car", "wishlist", "account", "downloads"].includes(tab);
 
   return (
@@ -204,6 +206,8 @@ const Shell: React.FC = () => {
                 onOpenMovie={handleOpenMovie}
                 onOpenShow={handleOpenShow}
                 onOpenAlbum={handleOpenAlbum}
+                onOpenGenre={handleOpenGenre}
+                onOpenGenres={() => navigate({ tab: "music", musicSection: "genres" })}
                 onNavigate={handleTabChange}
               />
             )}
@@ -247,8 +251,14 @@ const Shell: React.FC = () => {
                 <PlaylistDetailView
                   key={route.playlistId}
                   playlistId={route.playlistId}
-                  onBack={() => back({ tab: "music", playlists: true })}
+                  onBack={() => back({ tab: "music", musicSection: "playlists" })}
                   onExploreMusic={() => navigate({ tab: "music" })}
+                />
+              ) : route.genreId ? (
+                <GenreMixView
+                  key={route.genreId}
+                  genreId={route.genreId}
+                  onBack={() => back({ tab: "music", musicSection: "genres" })}
                 />
               ) : route.albumId ? (
                 <AlbumDetailView
@@ -260,12 +270,13 @@ const Shell: React.FC = () => {
                 <MusicView
                   artistId={route.artistId}
                   artistHint={artistHintRef.current}
-                  showPlaylists={!!route.playlists}
-                  onSectionChange={(playlists) => navigate({ tab: "music", playlists }, { replace: true })}
+                  section={route.musicSection}
+                  onSectionChange={(musicSection) => navigate({ tab: "music", musicSection }, { replace: true })}
                   onOpenArtist={handleOpenArtist}
                   onArtistBack={() => back({ tab: "music" })}
                   onOpenAlbum={handleOpenAlbum}
                   onOpenPlaylist={handleOpenPlaylist}
+                  onOpenGenre={handleOpenGenre}
                 />
               )
             )}

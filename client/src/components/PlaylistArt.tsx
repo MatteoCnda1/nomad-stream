@@ -3,15 +3,15 @@ import { ListMusic } from "lucide-react";
 import { MediaItem } from "../types";
 
 interface PlaylistArtProps {
-  tracks: MediaItem[];
+  tracks?: MediaItem[];
+  images?: string[]; // pochettes déjà choisies (mosaïque d'un genre)
   className?: string;
   round?: boolean;
 }
 
-export const PlaylistArt: React.FC<PlaylistArtProps> = ({ tracks, className = "", round }) => {
+export const PlaylistArt: React.FC<PlaylistArtProps> = ({ tracks = [], images, className = "", round }) => {
   // Récupérer les jaquettes valides uniques
-  const thumbs = tracks
-    .map((t) => t.thumb || t.parentThumb)
+  const thumbs = (images ?? tracks.map((t) => t.thumb || t.parentThumb))
     .filter((src): src is string => Boolean(src));
 
   // 1. Si au moins 4 jaquettes différentes, faire un collage 2x2
