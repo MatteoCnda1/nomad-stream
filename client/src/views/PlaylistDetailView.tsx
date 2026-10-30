@@ -150,7 +150,7 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
       <div className="flex flex-wrap items-center gap-2.5 sm:gap-3">
         <BigPlayButton
           onClick={handlePlayAll}
-          label="Écouter la playlist"
+          label="Lire la playlist"
           disabled={tracks.length === 0}
         />
 
@@ -357,7 +357,7 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
                     {/* Titre & sous-titre cliquables */}
                     <button
                       type="button"
-                      onClick={() => playTrack(track, tracks, idx)}
+                      onClick={() => playTrack(track)}
                       className="min-w-0 text-left py-1"
                     >
                       <span

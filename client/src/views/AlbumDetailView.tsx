@@ -102,7 +102,7 @@ export const AlbumDetailView: React.FC<AlbumDetailViewProps> = ({ albumId, onBac
       />
 
       <div className="flex items-center gap-2.5 sm:gap-3">
-        <BigPlayButton onClick={handlePlayAll} label="Écouter l'album" disabled={tracks.length === 0} />
+        <BigPlayButton onClick={handlePlayAll} label="Lire l'album" disabled={tracks.length === 0} />
         <button
           type="button"
           onClick={handleShuffle}
@@ -153,7 +153,7 @@ export const AlbumDetailView: React.FC<AlbumDetailViewProps> = ({ albumId, onBac
               index={idx}
               isCurrent={currentTrack?.id === track.id}
               saved={isSaved(track.id)}
-              onPlay={() => playTrack(track, tracks, idx)}
+              onPlay={() => playTrack(track)}
               onToggleSaved={() => toggle(track)}
               subtitle={track.originalTitle || track.grandparentTitle || album.parentTitle}
             />

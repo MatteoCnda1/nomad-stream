@@ -135,11 +135,8 @@ export const SearchView: React.FC<SearchViewProps> = ({
       case "album": return onOpenAlbum(item.id);
       case "movie": return onOpenMovie(item.id);
       case "show": return onOpenShow(item.id);
-      case "track": {
-        const tracks = results?.tracks ?? [item];
-        const i = tracks.findIndex((t) => t.id === item.id);
-        return i >= 0 ? playTrack(item, tracks, i) : playTrack(item, [item], 0);
-      }
+      // Un titre touché est joué tout de suite, sans effacer la file d'attente (#60)
+      case "track": return playTrack(item);
     }
   };
 
@@ -165,7 +162,7 @@ export const SearchView: React.FC<SearchViewProps> = ({
                 index={i}
                 isCurrent={currentTrack?.id === t.id}
                 saved={isSaved(t.id)}
-                onPlay={() => playTrack(t, all, i)}
+                onPlay={() => playTrack(t)}
                 onToggleSaved={() => toggle(t)}
                 subtitle={trackSubtitle(t)}
               />

@@ -98,7 +98,7 @@ export const GenreMixView: React.FC<GenreMixViewProps> = ({ genreId, onBack }) =
       />
 
       <div className="flex items-center gap-2.5 sm:gap-3">
-        <BigPlayButton onClick={() => playTrack(items[0], items, 0)} label={`Écouter le mix ${genre.name}`} disabled={items.length === 0} />
+        <BigPlayButton onClick={() => playTrack(items[0], items, 0)} label={`Lire le mix ${genre.name}`} disabled={items.length === 0} />
         <button
           type="button"
           onClick={() => load(true)}
@@ -133,7 +133,7 @@ export const GenreMixView: React.FC<GenreMixViewProps> = ({ genreId, onBack }) =
               index={idx}
               isCurrent={currentTrack?.id === track.id}
               saved={isSaved(track.id)}
-              onPlay={() => playTrack(track, items, idx)}
+              onPlay={() => playTrack(track)}
               onToggleSaved={() => toggle(track)}
               subtitle={[track.grandparentTitle, track.parentTitle].filter(Boolean).join(" · ")}
             />
