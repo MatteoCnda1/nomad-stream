@@ -148,7 +148,7 @@ const Shell: React.FC = () => {
       case "episode": return handlePlayMedia(item);
       case "album": return handleOpenAlbum(item.id);
       case "artist": return handleOpenArtist(item);
-      case "track": return playTrack(item, [item]);
+      case "track": return playTrack(item);
     }
   };
 

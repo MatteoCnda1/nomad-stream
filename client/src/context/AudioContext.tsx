@@ -387,7 +387,9 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
     };
   }, [currentTrack, nextTrack]);
 
-  // Lancement d'un titre
+  // Lancement d'un titre (#60). Avec `newQueue` (boutons « Lire » d'un album, d'une playlist, d'un
+  // mix) : la file est remplacée par la liste. Sans (un titre touché dans une liste) : la file ne
+  // bouge pas ; le titre y est rejoint s'il y est déjà, sinon inséré juste après le titre en cours.
   const playTrack = useCallback((track: MediaItem, newQueue?: MediaItem[], startIndex?: number) => {
     if (!audioRef.current) return;
 
