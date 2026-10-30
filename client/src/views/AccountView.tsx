@@ -8,6 +8,7 @@ import { clearPrefetched, prefetchUsage } from "../audioPrefetch";
 import { Avatar, Sk, ThemeToggle } from "../components/ui";
 import { useInstall } from "../hooks/useInstall";
 import { IOSInstallSteps } from "../components/InstallPrompt";
+import { EqualizerPanel } from "../components/EqualizerPanel";
 
 interface AccountViewProps {
   onNavigate: (tab: string) => void;
@@ -270,6 +271,11 @@ export const AccountView: React.FC<AccountViewProps> = ({ onNavigate }) => {
                 </div>
               </div>
             </div>
+          </Card>
+
+          {/* Égaliseur de la musique */}
+          <Card labelledBy="eq-h" className="col-span-12 xl:col-span-7">
+            <EqualizerPanel />
           </Card>
         </div>
       )}
