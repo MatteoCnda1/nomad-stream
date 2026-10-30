@@ -10,6 +10,7 @@ import {
   setPrefetchGate,
   setPrefetchWanted,
 } from "../audioPrefetch";
+import { registerAudioElement, resumeEqualizer } from "../equalizer";
 
 export type RepeatMode = "all" | "one" | "off";
 
@@ -159,6 +160,7 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const audio = new Audio();
     audioRef.current = audio;
+    registerAudioElement(audio); // égaliseur : branché à la première lecture s'il est activé
 
     // Préchargement (#56) : pas tant que le titre en cours, lu en flux, a moins de 30 s d'avance
     // (ou n'est pas chargé jusqu'au bout) : il garde la priorité sur le débit
@@ -210,6 +212,7 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
     };
 
     const handlePlay = () => {
+      resumeEqualizer(); // lecture relancée hors de l'appli (écran verrouillé, CarPlay)
       setIsPlaying(true);
       if ("mediaSession" in navigator) navigator.mediaSession.playbackState = "playing";
     };
@@ -426,6 +429,7 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
 
     audioRef.current.src = audioSource(track);
     audioRef.current.currentTime = 0;
+    resumeEqualizer(); // geste de l'utilisateur : le moteur audio de l'égaliseur peut démarrer
     audioRef.current.play().catch((err) => console.log("Audio autoplay prevented:", err));
   }, []);
 
@@ -442,6 +446,7 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
     if (!audio.paused) {
       audio.pause();
     } else {
+      resumeEqualizer();
       audio.play().catch((e) => console.log(e));
     }
   }, []);
