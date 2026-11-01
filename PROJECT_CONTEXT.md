@@ -20,9 +20,9 @@ Créer une application **PWA (Progressive Web App)** connectée à **Plex Media 
 
 ## 🖥️ Accès & Infrastructure
 
-* **Adresse principale (depuis le 28/10/2026)** : **`https://nomad.tail4df302.ts.net`**, accessible uniquement depuis le tailnet. HTTPS obligatoire pour le mode hors connexion.
+* **Adresse principale (depuis le 28/10/2026)** : **`https://nomad.tail4df302.ts.net`**, depuis le tailnet. HTTPS obligatoire pour le mode hors connexion. À la maison, aussi **`http://192.168.1.147:3000`** sans Tailscale (voulu, voir [Accès à Nomad](#-accès-à-nomad--qui-comment-et-comment-inviter-quelquun)).
   * Passerelle : **LXC 105 `nomad`** sur `pve` (Debian 13, iGPU `/dev/dri/renderD128`, médias montés en lecture seule sur `/media`, cache sur `/mnt/media/nomad-cache` → `/var/cache/nomad`).
-  * Service : `systemctl status nomad-stream` dans le LXC (utilisateur `nomad`, `/opt/nomad-stream`). Il écoute sur `127.0.0.1:3000` et `tailscale serve` le publie en HTTPS.
+  * Service : `systemctl status nomad-stream` dans le LXC (utilisateur `nomad`, `/opt/nomad-stream`). Il écoute sur `0.0.0.0:3000` (voulu, pour le réseau local : `HOST=0.0.0.0` dans `/etc/nomad-stream.env`, qui prime sur le `HOST=127.0.0.1` de l'unité systemd) et `tailscale serve` le publie en HTTPS sur le tailnet.
   * Déploiement : `./scripts/deploy-pve.sh` (compile le client, copie, redémarre). Accès SSH : `ssh -J pve root@192.168.1.147`.
 * **Ancienne passerelle (laptop `msi`)** : `http://100.77.169.75:3000`. **Désactivée le 28/10/2026** (service utilisateur `nomad-stream` arrêté et retiré du démarrage). Pour la relancer ponctuellement en développement : `systemctl --user start nomad-stream`.
 * **Serveur Plex Media (LXC 101 `plex`)** : `http://192.168.1.81:32400`. `pve` (`192.168.1.118`) est le routeur de sous-réseau Tailscale du LAN.
@@ -35,6 +35,55 @@ Créer une application **PWA (Progressive Web App)** connectée à **Plex Media 
 * **Déploiement continu** : après la fusion, le runner auto-hébergé du LXC (`nomad-lxc`, utilisateur `ghrunner`) installe la version testée via `sudo nomad-deploy` (seule commande root autorisée) : sauvegarde, installation, contrôle de santé, **retour automatique à la version précédente** si le service ne répond plus. Mise en place unique : `./scripts/install-runner.sh` (pose aussi `DEPLOY_ENABLED=true`). Redéployer `main` : `gh workflow run ci.yml --ref main`.
 * **Secrets** : `PLEX_TOKEN` (et `ACCESS_CODE` si l'auth est activée) dans `/etc/nomad-stream.env` (root, 600), lu par systemd ; jamais dans le code.
 * `./scripts/deploy-pve.sh` reste disponible pour tester une branche à la main ; le déploiement suivant de `main` l'écrase.
+
+---
+
+## 👥 Accès à Nomad : qui, comment, et comment inviter quelqu'un
+
+> En place depuis le 1er novembre 2026. La politique d'accès du tailnet (ACL) se modifie dans la console Tailscale : https://login.tailscale.com/admin/acls/file. Elle contient des tests (un invité ne joint ni `pve`, ni Plex, ni le VPS) : Tailscale refuse d'enregistrer une modification qui les casse.
+
+**Deux portes d'entrée, toutes deux voulues :**
+* **Réseau local (maison)** : `http://192.168.1.147:3000`, sans Tailscale ni compte. Pas de HTTPS, donc pas de mode hors connexion par cette adresse. L'IP vient du DHCP de la box.
+* **Tailscale (hors de la maison)** : `https://nomad.tail4df302.ts.net`.
+
+**Ce que la politique Tailscale autorise :**
+
+| Qui | Accès |
+|---|---|
+| Mes appareils (connectés avec mon compte, non tagués) | Tout : serveurs, LAN `192.168.1.0/24` via `pve`, VPS |
+| `tag:homelab` (`pve`, `plex`, `nomad`) | Entre eux uniquement ; rien vers mes appareils ni vers le VPS |
+| `tag:vps` (`rudylink-vps`) | Rien (autre projet, exposé sur Internet) |
+| Invités : `tag:guest` et utilisateurs à qui `nomad` est partagé (`autogroup:shared`) | `nomad` en `tcp:443` uniquement |
+
+### ✅ Inviter quelqu'un : partager la machine `nomad`
+
+1. L'invité installe Tailscale (App Store, Play Store ou https://tailscale.com/download) et se connecte avec **son propre compte** (Google, Apple, Microsoft…, gratuit).
+2. Console Tailscale → **Machines** → `nomad` → menu **⋯** → **Share…**, puis au choix :
+   * onglet **Share by email** : son adresse, puis **Share** (lien à usage unique envoyé par e-mail) ;
+   * onglet **Copy invite link** → **Copy share link**, à envoyer par message. Le lien vaut un mot de passe : laisser **Reusable link** décoché. Un lien non utilisé expire au bout de 30 jours.
+3. L'invité ouvre le lien et accepte : `nomad` apparaît dans son Tailscale. La fenêtre **Share** de `nomad` affiche alors sa photo et son e-mail.
+4. L'invité ouvre **`https://nomad.tail4df302.ts.net`** (le nom complet : `nomad` tout court ne marche pas depuis son tailnet) et l'installe sur l'écran d'accueil (Safari → Partager → « Sur l'écran d'accueil »). Tailscale doit être activé sur son téléphone pour regarder hors de chez moi.
+
+Pourquoi cette méthode : une personne à qui on partage une machine ne voit **que cette machine**. Les routes de sous-réseau (le LAN) ne sont jamais partagées, et `nomad` ne peut pas ouvrir de connexion vers ses appareils. La règle `autogroup:shared` → `nomad:443` limite en plus l'accès au seul HTTPS.
+
+**Retirer l'accès** : Machines → `nomad` → **Share…** → menu sur la ligne de la personne → **Revoke invite**. Effet immédiat ; pour revenir, il faut une nouvelle invitation.
+
+### ❌ À ne pas faire
+
+* **Connecter l'appareil d'un invité avec mon compte** : il devient « mon appareil » et accède à tout (serveurs, LAN, VPS) tant qu'il n'est pas tagué.
+* **Inviter quelqu'un comme utilisateur du tailnet** (page **Users** → **Invite users**) : il devient membre (`autogroup:member`) et a le même accès complet que moi.
+
+### Cas de secours : appareil déjà connecté avec mon compte
+
+C'est le cas de `ipad1410`. Tout de suite : Machines → l'appareil → **⋯** → **Edit ACL tags** → `tag:guest`. Il n'atteint alors plus que `nomad:443`. L'appareil n'est plus rattaché à mon compte et sa clé n'expire plus. À terme, préférer le partage : déconnecter l'appareil, puis suivre « Inviter quelqu'un ».
+
+### Vérifier ce qui est réellement appliqué
+
+Filtres actifs sur `nomad` (une ligne par règle ; un invité ne doit apparaître qu'avec `100.93.33.36` port 443) :
+
+```bash
+ssh pve 'pct exec 105 -- tailscale debug netmap' | jq -c '.PacketFilter[] | {Srcs, Dsts}'
+```
 
 ---
 
@@ -140,7 +189,7 @@ Créer une application **PWA (Progressive Web App)** connectée à **Plex Media 
 | Transcodage iGPU multi-débits (phase 3, option B) | ✅ | `server/transcoder.js` : ffmpeg VAAPI (HD Graphics 530), 4 qualités produites simultanément (1080p 6 Mb/s, 720p 3, 480p 1,2, 360p 0,6), segments de 4 s générés à la demande. Le lecteur (hls.js, ou Safari natif) change de qualité **segment par segment, sans coupure**. |
 | Tampon agrandi (phase 1) | ✅ | hls.js garde 120 s d'avance (jusqu'à 180 s) ; la passerelle produit jusqu'à 300 s d'avance puis met ffmpeg en pause. |
 | Mode hors connexion (phase 4) | ✅ | `server/offline.js` + page « Téléchargements » : MP4 720p (≈ 1,2 Go/h) ou 480p (≈ 0,5 Go/h) préparé par l'iGPU, stocké dans le navigateur (Cache API), lu sans réseau via le service worker (requêtes partielles prises en charge). |
-| Accès restreint au tailnet | ✅ | Le service écoute sur `127.0.0.1` ; LAN refusé, HTTPS tailnet seulement. |
+| Accès restreint au tailnet | ↩️ | Le service écoutait sur `127.0.0.1` (LAN refusé, HTTPS tailnet seulement). Rouvert ensuite volontairement au réseau local : voir [Accès à Nomad](#-accès-à-nomad--qui-comment-et-comment-inviter-quelquun). |
 
 **Mesures (Chrome headless, laptop en 4G, via la passerelle `pve`)**
 
@@ -183,7 +232,7 @@ Vitesse de l'iGPU pour 4 qualités simultanées : H.264 1080p 4,4× ; HEVC 10 bi
 **Phase 2 : déplacer la passerelle à la maison (gain principal, ≈ 1 soirée)**
 - [x] Créer un LXC Debian sur `pve` à côté de Plex (Node 24, service systemd, même code), avec `PLEX_URL` en LAN (gigabit).
 - [x] Tailscale dans ce LXC (ou s'appuyer sur `pve`, déjà en connexion directe) ; idéalement rediriger le port UDP 41641 sur la box pour garantir des connexions directes sans relais DERP.
-- [x] Limiter l'écoute à l'IP Tailscale (aujourd'hui `0.0.0.0` : l'appli est accessible à tout le réseau local, sans mot de passe).
+- [ ] ~~Limiter l'écoute à l'IP Tailscale~~ : abandonné, l'écoute sur `0.0.0.0` est voulue pour que le réseau local accède à Nomad sans Tailscale. Les invités Tailscale, eux, sont limités à `nomad:443` par la politique du tailnet.
 - Effet attendu : la vidéo ne traverse Internet **qu'une fois** (box → appareil), le laptop n'a plus besoin d'être allumé ni connecté, et la 4G montante n'est plus sur le trajet.
 - Prérequis : débit montant de la box ≥ ~10 Mb/s par lecture simultanée (mesuré en phase 0).
 
