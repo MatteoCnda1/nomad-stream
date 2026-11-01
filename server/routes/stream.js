@@ -78,9 +78,13 @@ async function proxyStream(req, res, targetUrl, { timeoutMs = 20000, retries = 1
 
   try {
     await pipeline(Readable.fromWeb(upstream.body), meter, res);
-  } catch {
+  } catch (error) {
     // Navigateur parti ou flux interrompu : pipeline a déjà détruit les deux côtés,
-    // le navigateur (ou hls.js) relancera la requête si besoin.
+    // le navigateur (ou hls.js) relancera la requête si besoin. Seule la coupure venue de Plex
+    // est notée (le navigateur qui abandonne un téléchargement est normal).
+    if (!clientGone.signal.aborted) {
+      console.error(`Flux coupé par Plex (${error.cause?.code || error.code || error.message}) : ${new URL(targetUrl).pathname}`);
+    }
   } finally {
     clearInterval(watchdog);
   }

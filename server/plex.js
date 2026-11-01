@@ -23,19 +23,55 @@ export function plexClientId(raw) {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-// fetch vers Plex avec délai maximal avant réception des en-têtes et nouvelles tentatives
-// (micro-coupure Tailscale, erreur 5xx). Le délai ne s'applique pas au corps de la réponse :
-// un flux peut durer des heures. Si `signal` est annulé (client parti), le corps est coupé aussi.
-// `retryIf(erreur)` écarte les erreurs après lesquelles il ne faut pas réessayer.
+// Statuts sans corps : rien à lire d'avance
+const NULL_BODY = new Set([101, 204, 205, 304]);
+
+// Plex ferme ses connexions restées inactives, et fetch peut réutiliser une connexion qu'il vient
+// de fermer : les en-têtes arrivent, puis le corps s'interrompt avant le premier octet
+// (UND_ERR_SOCKET, « other side closed »). Mesuré le 01/11/2026 : 2 requêtes sur 60 ; côté
+// navigateur, un titre ou une image qui ne se charge pas (« proxy error: EOF » chez tailscaled).
+// Le premier morceau du corps est donc lu ici, avant de rendre la réponse : s'il échoue, rien
+// n'est encore parti vers le navigateur et la requête peut être refaite sur une autre connexion.
+async function withFirstChunk(response) {
+  if (!response.body || NULL_BODY.has(response.status)) return response;
+  const reader = response.body.getReader();
+  const first = await reader.read();
+  const body = first.done
+    ? null
+    : new ReadableStream({
+        start(controller) {
+          controller.enqueue(first.value);
+        },
+        async pull(controller) {
+          const { done, value } = await reader.read();
+          if (done) controller.close();
+          else controller.enqueue(value);
+        },
+        cancel(reason) {
+          return reader.cancel(reason);
+        },
+      });
+  return new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers });
+}
+
+const isStaleConnection = (error) =>
+  error?.cause?.code === "UND_ERR_SOCKET" || error?.code === "UND_ERR_SOCKET" || error?.message === "terminated";
+
+// fetch vers Plex avec délai maximal avant réception du début de la réponse et nouvelles tentatives
+// (micro-coupure Tailscale, erreur 5xx, connexion périmée). Le délai ne s'applique pas au reste du
+// corps : un flux peut durer des heures. Si `signal` est annulé (client parti), le corps est coupé aussi.
+// `retryIf(erreur)` écarte les erreurs après lesquelles il ne faut pas réessayer. Une connexion
+// périmée est retentée tout de suite, jusqu'à 2 fois, en plus de `retries`.
 export async function fetchPlex(url, { method = "GET", headers = {}, timeoutMs = 20000, retries = 0, retryIf = () => true, signal } = {}) {
   let lastError;
+  let staleRetries = 2;
   for (let attempt = 0; attempt <= retries; attempt++) {
     if (signal?.aborted) throw new Error("Client déconnecté");
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(new Error(`Plex n'a pas répondu en ${timeoutMs / 1000} s`)), timeoutMs);
     signal?.addEventListener("abort", () => controller.abort(signal.reason), { once: true });
     try {
-      const response = await fetch(url, { method, headers, signal: controller.signal });
+      const response = await withFirstChunk(await fetch(url, { method, headers, signal: controller.signal }));
       clearTimeout(timer);
       if (response.status < 500 || attempt === retries) return response;
       response.body?.cancel().catch(() => {});
@@ -43,7 +79,13 @@ export async function fetchPlex(url, { method = "GET", headers = {}, timeoutMs =
     } catch (error) {
       clearTimeout(timer);
       lastError = error;
+      // retryIf d'abord : le garde-fou des images interdit toute nouvelle tentative après une
+      // coupure pendant un transcodage (Plex vient peut-être de planter sur cette image)
       if (signal?.aborted || !retryIf(error)) throw error;
+      if (isStaleConnection(error) && staleRetries-- > 0) {
+        attempt--;
+        continue;
+      }
     }
     if (attempt < retries) await sleep(400 * (attempt + 1));
   }
