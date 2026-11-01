@@ -87,6 +87,52 @@ ssh pve 'pct exec 105 -- tailscale debug netmap' | jq -c '.PacketFilter[] | {Src
 
 ---
 
+## 🎵 Bibliothèque musique : travail en cours, à reprendre
+
+> **Mis en pause le 01/11/2026 au soir** (coupure de connexion). Les outils, plans, journaux et résultats sont sur pve dans `/root/musique-nettoyage/` (`LISEZMOI.md` pour le mode d'emploi). Les scripts Plex sont dans le LXC 105 : `/root/plex-musique-rafraichir.sh`, `plex-actualiser.sh`, `plex-fusionner.sh`, `liste-titres.sh`, `sessions.sh` (qui lit en ce moment).
+
+### Fait le 01/11/2026
+- **Nettoyage des fichiers** (1 209 opérations, rien d'effacé) :
+  - 564 titres convertis en FLAC (550 ALAC et 14 E-AC3, illisibles dans Chrome/Android) ;
+  - 10 albums en un seul fichier découpés en pistes ;
+  - 385 doublons en quarantaine ;
+  - 43 titres rattachés à leur album, 200 tags unifiés, 5 albums renumérotés ;
+  - 16 pochettes et 4 FLAC (tag ID3v1 en fin de fichier) corrigés ;
+  - propriétaires remis à `media`.
+
+  La quarantaine est dans `/mnt/media/_quarantaine-musique` (25 Go), avec `JOURNAL.tsv` pour tout restaurer et un `LISEZMOI.md`.
+- **Plex** : analyse et corbeille de la section Musique, puis 10 albums éclatés fusionnés (fonction « Fusionner » de Plex). Bilan : 7 074 → 6 857 titres, 2 619 → 2 473 albums, plus que du MP3, du FLAC et de l'AAC.
+- **Titres qui ne se lisaient pas au hasard** (erreur 4, « Format error », 3 à 5 % des démarrages, sur des fichiers sains) :
+  - cause : des connexions périmées entre la passerelle et Plex, corrigée par #74 ;
+  - #73 (délais keep-alive avec `tailscale serve`) était juste, mais ce n'était pas la cause ;
+  - après #74 : 150 démarrages sur 150 par Tailscale, 0 `proxy error`, et des titres écoutés en entier sans coupure.
+
+### À reprendre, dans l'ordre
+1. **Finir le test de lecture de toute la bibliothèque.** Après #74, 600 titres sur 6 857 ont été testés : 593 OK, 7 « délai dépassé », tous sur *Jah Victory* d'Alpha Blondy.
+   - Depuis le laptop (Chrome et accès au LAN nécessaires) : `scp -r pve:/root/musique-nettoyage/verification-lecture . && cd verification-lecture && python3 tester_bibliotheque.py all-tracks.json resultats.json`.
+   - Régénérer d'abord `all-tracks.json` avec `liste-titres.sh` dans le LXC 105.
+   - Retester seuls les titres en échec (`--ids`) : ceux qui échouent encore ont un vrai problème de fichier à corriger.
+2. **Démarrage lent des FLAC découpés.** Les titres d'Alpha Blondy (*Jah Victory*) mettent 4 à 8 s à devenir lisibles, contre environ 0,1 s pour un MP3 (mesuré en temps réel). Pistes :
+   - 30 Mo par titre ;
+   - pochette PNG intégrée ;
+   - analyse Plex en cours sur les fichiers ajoutés ;
+   - débit du Wi-Fi.
+
+   Comparer avec un FLAC non découpé de même débit, et vérifier les autres albums découpés (Bob Marley, Steel Pulse, Jimmy Cliff…).
+3. **Coupures de flux par Plex en plein envoi** (`Flux coupé par Plex (UND_ERR_SOCKET)` dans `journalctl -u nomad-stream`). Nombreuses sous la charge des tests, rares au repos, et Chrome les rattrape en redemandant la suite. Option : reprise transparente dans `proxyStream`, qui redemanderait la suite avec `Range`.
+4. **À décider, non fusionné exprès** (liste complète : `rapport.md`, sections « À vérifier à la main ») :
+   - coffret Kool & the Gang « Hit Box » (3 disques vus comme 3 albums) ;
+   - Daft Punk *Alive 2007* CD1/CD2 ;
+   - Tayc et The Weeknd, rangés dans deux genres ;
+   - Dadju « Miel Book Edition ».
+5. **11 titres espagnols dans `Rap FR/Jul/`** (« JUL - Nieve de Enero.mp3 »…) : ils sont d'un autre artiste nommé JUL, téléchargé par erreur. À retirer ou à ranger ailleurs. Et « La Mano 1.9 - MMA.mp3 » a quelques trames abîmées : à retélécharger.
+6. **Playlists et « Ma liste » sur les appareils** : les titres convertis ou retirés ont changé d'identifiant Plex, et leurs entrées ne se lisent plus (#67).
+7. **Vider la quarantaine** une fois vérifiée (≈ 25 Go), et l'exclure de la copie vers le NAS (#51).
+
+Issues liées : #65 à #72, #75 (repli quand un format n'est pas lisible), #76 (outils de nettoyage dans le dépôt, audit régulier).
+
+---
+
 ## ⚡ Architecture d'Optimisation des Performances (Audit & Résolution)
 
 ### 1. Problèmes initiaux identifiés sur mobile :
