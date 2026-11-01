@@ -151,8 +151,14 @@ app.get("*", (req, res) => {
 
 // HOST=127.0.0.1 : accessible uniquement via `tailscale serve` (HTTPS, tailnet seulement)
 const HOST = process.env.HOST || "0.0.0.0";
-app.listen(PORT, HOST, () => {
+const server = app.listen(PORT, HOST, () => {
   console.log(`⚡ Nomad Stream Server démarré sur http://${HOST}:${PORT}`);
   console.log(`🔗 Relié à Plex : ${plex.url}`);
   console.log(`🚀 Compression HTTP & Cache WebP actif`);
 });
+// `tailscale serve` (proxy Go) garde ses connexions vers la passerelle 90 s pour les réutiliser ;
+// Node les fermait au bout de 5 s. Une requête envoyée sur une connexion tout juste fermée
+// échouait en 502 (« http: proxy error: EOF » dans le journal de tailscaled), au hasard :
+// un titre ou une image qui ne se charge pas, surtout après quelques secondes sans requête.
+server.keepAliveTimeout = 120 * 1000;
+server.headersTimeout = 125 * 1000; // doit rester au-dessus de keepAliveTimeout
