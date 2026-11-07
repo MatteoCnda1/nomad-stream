@@ -161,6 +161,13 @@ export const MovieDetailView: React.FC<MovieDetailViewProps> = ({ movieId, onBac
           </div>
         </div>
 
+        {movie.missing && (
+          <p role="status" className="mt-4 px-4 py-3 rounded-2xl bg-card text-sm text-muted">
+            Le fichier de ce film n'est plus sur le disque du serveur : il ne peut être ni lu ni téléchargé
+            tant qu'il n'a pas été récupéré.
+          </p>
+        )}
+
         {movie.progressPercent > 0 && (
           <div className="mt-4 flex items-center gap-3 text-[13px] text-muted">
             <div className="flex-1 max-w-[240px] h-1 rounded bg-line2">

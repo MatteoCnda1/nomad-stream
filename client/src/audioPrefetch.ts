@@ -10,6 +10,10 @@ const PREFIX = "/precharge/";
 const BUDGET = 250e6; // au-delà, les titres préchargés les plus anciens sont effacés
 const MAX_TRACK = 120e6; // mix d'une heure en FLAC : trop lourd, il reste lu en flux
 const RETRY_MS = 20000; // après un échec réseau, pas de nouvel essai avant
+// Téléchargement qui ne reçoit plus rien (VPN ou réseau mobile qui ne transmet plus, sans
+// erreur) : abandonné, sinon il bloquerait tous les préchargements suivants jusqu'à la
+// fermeture de l'appli
+const IDLE_MS = 20000;
 
 const pathOf = (partId: string) => `${PREFIX}${partId}`;
 export const streamUrlOf = (t: MediaItem) => t.streamUrl || `/api/stream/audio?key=${encodeURIComponent(t.partKey || "")}`;
@@ -103,8 +107,25 @@ async function pump() {
 
 // Téléchargement en flux vers le cache (jamais entièrement en mémoire). Faux si le titre est
 // trop lourd ou de taille inconnue (impossible alors de vérifier qu'il est complet).
-async function download(track: MediaItem, signal: AbortSignal): Promise<boolean> {
+async function download(track: MediaItem, outer: AbortSignal): Promise<boolean> {
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  outer.addEventListener("abort", abort, { once: true });
+  let lastData = Date.now();
+  const idle = window.setInterval(() => {
+    if (Date.now() - lastData > IDLE_MS) controller.abort(new Error("Plus aucune donnée reçue"));
+  }, 5000);
+  try {
+    return await downloadTo(track, controller.signal, () => (lastData = Date.now()));
+  } finally {
+    window.clearInterval(idle);
+    outer.removeEventListener("abort", abort);
+  }
+}
+
+async function downloadTo(track: MediaItem, signal: AbortSignal, onData: () => void): Promise<boolean> {
   const res = await fetch(streamUrlOf(track), { signal, cache: "no-store" });
+  onData();
   if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
   const total = Number(res.headers.get("content-length")) || 0;
   if (!total || total > MAX_TRACK) {
@@ -114,6 +135,7 @@ async function download(track: MediaItem, signal: AbortSignal): Promise<boolean>
   let received = 0;
   const counter = new TransformStream<Uint8Array, Uint8Array>({
     transform(chunk, controller) {
+      onData();
       received += chunk.byteLength;
       controller.enqueue(chunk);
     },

@@ -33,6 +33,9 @@ export const DownloadButton: React.FC<{ media: MediaDetail; className?: string }
 
   const onClick = () => {
     if (!supported) return setNotice(reason);
+    if (media.missing && entry?.state !== "done") {
+      return setNotice("Fichier absent du disque du serveur : téléchargement impossible.");
+    }
     if (!entry) return setChoosing((v) => !v);
     if (entry.state === "error") retry(entry.id);
   };
@@ -89,6 +92,9 @@ export const DownloadButton: React.FC<{ media: MediaDetail; className?: string }
         </div>
       )}
       {notice && <p className="mt-2 text-xs text-muted max-w-[280px]">{notice}</p>}
+      {!notice && entry?.state === "error" && entry.error && (
+        <p className="mt-2 text-xs text-muted max-w-[280px]">Échec : {entry.error}</p>
+      )}
     </div>
   );
 };

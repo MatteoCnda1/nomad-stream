@@ -3,8 +3,12 @@
 import express from "express";
 import { SECTIONS, PLEX_WEB_PROFILE, plexClientId, fetchPlex, formatMediaItem, formatListItem, formatTrack } from "../plex.js";
 import { isNumericId } from "../validate.js";
+import { partMissing, preferExistingMedia } from "../availability.js";
 
-export function catalogRoutes({ plex, cache }) {
+// Sans `availability` (tests, passerelle sans accès aux fichiers) : rien n'est masqué
+const NO_FILTER = { filter: async (items) => items, hiddenMovieCount: async () => 0 };
+
+export function catalogRoutes({ plex, cache, availability = NO_FILTER }) {
   const { plexFetch, plexUrl } = plex;
   const router = express.Router();
 
@@ -20,8 +24,11 @@ export function catalogRoutes({ plex, cache }) {
 
     try {
       const data = await plexFetch(`/library/sections/${section}/all?sort=${encodeURIComponent(sort)}&X-Plex-Container-Start=${offset}&X-Plex-Container-Size=${limit}`);
-      const totalSize = data.MediaContainer?.totalSize || 0;
-      const items = (data.MediaContainer?.Metadata || []).map(formatListItem);
+      // Films sans fichier retirés ; le total l'est aussi, sinon la liste réclamerait sans fin
+      // les éléments manquants (pages numérotées côté Plex, inchangées)
+      const hiddenCount = section === SECTIONS.movies ? await availability.hiddenMovieCount() : 0;
+      const totalSize = Math.max(0, (data.MediaContainer?.totalSize || 0) - hiddenCount);
+      const items = await availability.filter((data.MediaContainer?.Metadata || []).map(formatListItem));
 
       const result = {
         items,
@@ -76,8 +83,8 @@ export function catalogRoutes({ plex, cache }) {
         r.status === "fulfilled" ? (r.value.MediaContainer?.Metadata || []).slice(0, max).map(formatMediaItem) : [];
 
       const result = {
-        onDeck: items(onDeckRes),
-        recentMovies: items(moviesRes),
+        onDeck: await availability.filter(items(onDeckRes)),
+        recentMovies: await availability.filter(items(moviesRes)),
         recentShows: items(showsRes, 12),
         recentMusic: items(musicRes),
       };
@@ -118,7 +125,7 @@ export function catalogRoutes({ plex, cache }) {
         episodeCount: s.leafCount,
         thumb: s.thumb ? `/api/image?path=${encodeURIComponent(s.thumb)}&width=300&height=450` : show.thumb,
       }));
-      const episodes = (episodesData.MediaContainer?.Metadata || []).map(formatMediaItem);
+      const episodes = await availability.filter((episodesData.MediaContainer?.Metadata || []).map(formatMediaItem));
 
       const result = {
         show,
@@ -200,9 +207,12 @@ export function catalogRoutes({ plex, cache }) {
     if (cached) return res.json(cached);
 
     try {
-      const data = await plexFetch(`/library/metadata/${id}`);
+      // checkFiles : Plex vérifie que le fichier est encore sur le disque (une fiche peut survivre
+      // à un fichier perdu ou déplacé tant que la bibliothèque n'a pas été réanalysée)
+      const data = await plexFetch(`/library/metadata/${id}?checkFiles=1`);
       const item = data.MediaContainer?.Metadata?.[0];
       if (!item) return res.status(404).json({ error: "Item not found" });
+      const mediaIndex = preferExistingMedia(item);
 
       const formatted = formatMediaItem(item);
       const media = item.Media?.[0];
@@ -242,6 +252,9 @@ export function catalogRoutes({ plex, cache }) {
 
       const result = {
         ...formatted,
+        // Fichier absent du disque : la lecture et le téléchargement sont impossibles
+        missing: partMissing(part),
+        mediaIndex,
         audioStreams,
         subtitleStreams,
         directStreamUrl,

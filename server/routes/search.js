@@ -10,7 +10,7 @@ const ONLY_LIMIT = 100;
 const GROUPS = ["movies", "shows", "artists", "albums", "tracks"];
 const EMPTY = { top: null, movies: [], shows: [], artists: [], albums: [], tracks: [] };
 
-export function searchRoutes({ plex, librarySearch }) {
+export function searchRoutes({ plex, librarySearch, availability }) {
   const router = express.Router();
 
   async function plexSearch(q, limits) {
@@ -55,7 +55,15 @@ export function searchRoutes({ plex, librarySearch }) {
         .filter((item) => !seen.has(item.id) && seen.add(item.id))
         .sort((a, b) => b.score - a.score);
     }
-    const tops = [lib?.top, px?.top].filter(Boolean);
+    // Films et épisodes au fichier disparu : pas proposés
+    if (availability) {
+      result.movies = await availability.filter(result.movies);
+      result.shows = await availability.filter(result.shows);
+    }
+    const tops = [];
+    for (const t of [lib?.top, px?.top]) {
+      if (t && !(availability && (await availability.isHidden(t.id)))) tops.push(t);
+    }
     result.top = tops.reduce((best, t) => (t.score > best.score ? t : best), tops[0] ?? null);
     res.json(result);
   });

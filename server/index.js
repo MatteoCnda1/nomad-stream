@@ -21,6 +21,7 @@ import { radioRoutes } from "./routes/radio.js";
 import { genreRoutes } from "./routes/genres.js";
 import { createLibrarySearch } from "./search.js";
 import { createMusicGenres, parseFolders } from "./genres.js";
+import { createAvailability } from "./availability.js";
 
 dotenv.config();
 
@@ -55,6 +56,20 @@ const transcoder = process.env.NOMAD_TRANSCODER === "vaapi"
   : null;
 const offline = transcoder?.available ? createOffline({ transcoder, cacheDir: CACHE_DIR }) : null;
 
+// Films et épisodes au fichier disparu, masqués dans l'appli. Il faut que la passerelle voie les
+// fichiers (LXC à côté de Plex) : actif avec le transcodeur iGPU, ou forcé par NOMAD_HIDE_MISSING=1
+// (=0 le désactive). Chemins traduits comme pour le transcodeur (NOMAD_MEDIA_MAP).
+const mediaMap = (process.env.NOMAD_MEDIA_MAP || "").split(",").filter(Boolean).map((m) => m.split("="));
+const availability = createAvailability({
+  plexFetch: plex.plexFetch,
+  enabled: process.env.NOMAD_HIDE_MISSING === "1" || (!!transcoder && process.env.NOMAD_HIDE_MISSING !== "0"),
+  localPath: (p) => {
+    for (const [from, to] of mediaMap) if (p.startsWith(from)) return to + p.slice(from.length);
+    return p;
+  },
+});
+if (availability.enabled && process.env.NOMAD_SEARCH_WARMUP !== "0") setTimeout(() => availability.refresh(), 2000).unref();
+
 // Compression HTTP (Gzip/Brotli) pour tous les assets et JSON
 app.use(compression({
   threshold: 1024,
@@ -81,7 +96,7 @@ if (auth.enabled) console.log("🔒 Code d'accès actif (auth par cookie)");
 // -------------------------------------------------------------
 // ROUTES API
 // -------------------------------------------------------------
-app.use(catalogRoutes({ plex, cache: createMemoryCache() }));
+app.use(catalogRoutes({ plex, availability, cache: createMemoryCache() }));
 // Index de recherche construit peu après le démarrage (la première recherche ne l'attend pas),
 // puis reconstruit en arrière-plan quand il a plus de NOMAD_SEARCH_TTL_MIN minutes
 const librarySearch = createLibrarySearch({
@@ -91,7 +106,7 @@ const librarySearch = createLibrarySearch({
 if (process.env.NOMAD_SEARCH_WARMUP !== "0") {
   setTimeout(() => librarySearch.rebuild().catch((e) => console.error("Index de recherche :", e.message)), 3000).unref();
 }
-app.use(searchRoutes({ plex, librarySearch }));
+app.use(searchRoutes({ plex, librarySearch, availability }));
 app.use(radioRoutes({ plex, librarySearch, cache: createMemoryCache({ maxEntries: 200 }) }));
 // Genres de la musique = dossiers de premier niveau ; NOMAD_MUSIC_GENRE_FOLDERS renomme ou écarte
 // ceux qui n'en sont pas ("Dossier=Genre,Fourre-tout=")

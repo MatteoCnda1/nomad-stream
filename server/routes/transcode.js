@@ -1,6 +1,7 @@
 // Transcodeur iGPU de la passerelle : HLS multi-débits et versions hors connexion.
 import express from "express";
 import { isNumericId, isJobId } from "../validate.js";
+import { preferExistingMedia } from "../availability.js";
 
 export function transcodeRoutes({ plex, transcoder, offline }) {
   const { plexFetch } = plex;
@@ -8,8 +9,10 @@ export function transcodeRoutes({ plex, transcoder, offline }) {
 
   // Fichier source d'un média, tel que Plex le voit
   async function sourceOf(id) {
-    const data = await plexFetch(`/library/metadata/${id}`);
+    // Version encore sur le disque d'abord (fiche avec une ancienne version au fichier disparu)
+    const data = await plexFetch(`/library/metadata/${id}?checkFiles=1`);
     const item = data.MediaContainer?.Metadata?.[0];
+    preferExistingMedia(item);
     return { item, part: item?.Media?.[0]?.Part?.[0] };
   }
 
