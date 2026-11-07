@@ -56,6 +56,10 @@ export interface MediaDetail extends MediaItem {
   subtitleStreams: StreamTrack[];
   directStreamUrl: string;
   hlsStreamUrl: string;
+  // Fichier absent du disque du serveur (fiche Plex encore présente) : ni lecture ni téléchargement
+  missing?: boolean;
+  // Version lue (index Plex) quand la fiche en compte plusieurs, dont certaines disparues
+  mediaIndex?: number;
 }
 
 export interface Season {

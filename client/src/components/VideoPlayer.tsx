@@ -428,6 +428,15 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ media, localSrc, onClo
       return;
     }
 
+    // Fiche Plex dont le fichier n'est plus sur le disque : inutile de solliciter un transcodeur,
+    // Plex accepterait la session puis ne produirait jamais une image
+    if (media.missing) {
+      setPhase("error");
+      setErrorText("Le fichier de ce titre n'est plus sur le disque du serveur.");
+      sessionStatsRef.current.error = "missing";
+      return;
+    }
+
     const { audio, subtitle, dirty } = tracksRef.current;
     const subtitles = subtitle != null;
     const pref: QualityPref = opts.quality ?? qualityPrefRef.current;
@@ -460,6 +469,13 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ media, localSrc, onClo
           if (r.ok) fetch(`/api/tx/${data.job}/stop`).catch(() => {});
           return;
         }
+        if (r.status === 404 && /introuvable/i.test(data.error || "")) {
+          // Le fichier a disparu du disque : Plex n'y arriverait pas mieux
+          setPhase("error");
+          setErrorText("Le fichier de ce titre n'est plus sur le disque du serveur.");
+          sessionStatsRef.current.error = "missing";
+          return;
+        }
         if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
         startAbr(data as TxSession, startTime, pref);
         return;
@@ -487,6 +503,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ media, localSrc, onClo
       quality,
       offset: String(Math.floor(startTime)),
     });
+    if (media.mediaIndex) params.set("mediaIndex", String(media.mediaIndex));
     if (dirty && media.partId) {
       params.set("partId", media.partId);
       if (audio != null) params.set("audioStreamID", String(audio));

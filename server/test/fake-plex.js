@@ -11,7 +11,7 @@ const movie = (id, title) => ({
   year: 2020,
   duration: 6_000_000,
   thumb: `/library/metadata/${id}/thumb/1700000000`,
-  Media: [{ container: "mp4", videoCodec: "h264", audioCodec: "aac", Part: [{ id: 10 + id, key: `/library/parts/${10 + id}/file.mp4` }] }],
+  Media: [{ container: "mp4", videoCodec: "h264", audioCodec: "aac", Part: [{ id: 10 + id, key: `/library/parts/${10 + id}/file.mp4`, file: `/media/Films/${id}.mp4` }] }],
 });
 
 // Bibliothèque musicale : artistes (type 8), albums (9) et titres (10)
@@ -116,7 +116,19 @@ function respond(url, res) {
   if (/^\/library\/metadata\/\d+$/.test(p)) {
     const id = p.split("/")[3];
     const music = Object.values(MUSIC).flat().find((m) => m.ratingKey === id);
-    return json({ Metadata: [music || movie(Number(id), "Alpha")] });
+    const item = music || movie(Number(id), "Alpha");
+    if (!music && url.searchParams.get("checkFiles") === "1") {
+      // checkFiles=1 : le film 60 n'a plus de fichier sur le disque
+      item.Media[0].Part[0].exists = id !== "60";
+      // Film 61 réencodé : l'ancienne version (fichier disparu) reste en tête, la nouvelle en second
+      if (id === "61") {
+        item.Media = [
+          { container: "mkv", videoCodec: "h264", audioCodec: "truehd", Part: [{ id: 610, key: "/library/parts/610/file.mkv", exists: false }] },
+          { container: "mkv", videoCodec: "hevc", audioCodec: "aac", Part: [{ id: 611, key: "/library/parts/611/file.mkv", exists: true }] },
+        ];
+      }
+    }
+    return json({ Metadata: [item] });
   }
   if (p === "/photo/:/transcode") {
     res.writeHead(200, { "Content-Type": `image/${url.searchParams.get("format") || "jpeg"}` });

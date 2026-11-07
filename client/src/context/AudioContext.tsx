@@ -392,6 +392,50 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
       resumeFrom(audio, audioSource(track), audio.currentTime);
     });
 
+    // Flux figé sans erreur (VPN ou réseau mobile qui ne transmet plus rien, requête du titre
+    // suivant jamais aboutie) : le navigateur attendrait indéfiniment, il fallait rouvrir l'appli.
+    // Une lecture en cours (non mise en pause) qui n'avance plus depuis STALL_MS repart du même
+    // endroit, depuis la copie préchargée si elle est prête ; après STALL_RETRIES essais, le titre
+    // est sauté.
+    const STALL_MS = 10000;
+    const STALL_RETRIES = 3;
+    const stall = { audio: null as HTMLAudioElement | null, src: "", time: -1, since: Date.now(), retries: 0, retryAt: 0 };
+    const watchdog = window.setInterval(() => {
+      const audio = audioRef.current;
+      const track = currentTrackRef.current;
+      const now = Date.now();
+      if (!audio || !track || !audio.src || audio.paused || audio.ended || fadeRef.current) {
+        stall.since = now;
+        return;
+      }
+      if (audio !== stall.audio || audio.src !== stall.src) {
+        // Nouveau titre (ou nouvelle source après une relance) : la mesure repart de zéro
+        if (audio.src !== stall.src && !isPrecharge(audio.src) && !isPrecharge(stall.src)) stall.retries = 0;
+        Object.assign(stall, { audio, src: audio.src, time: audio.currentTime, since: now });
+        return;
+      }
+      if (audio.currentTime !== stall.time) {
+        if (audio.currentTime > stall.retryAt + 5) stall.retries = 0; // le titre est vraiment reparti
+        stall.time = audio.currentTime;
+        stall.since = now;
+        return;
+      }
+      if (now - stall.since < STALL_MS) return;
+      stall.since = now;
+      if (stall.retries >= STALL_RETRIES) {
+        console.warn("Titre bloqué malgré les relances : titre suivant");
+        stall.retries = 0;
+        advance();
+        return;
+      }
+      stall.retries++;
+      stall.retryAt = audio.currentTime;
+      console.warn(`Lecture bloquée depuis ${STALL_MS / 1000} s : relance ${stall.retries}/${STALL_RETRIES}`);
+      if (isPrecharge(audio.src)) forgetPrefetched(track); // copie illisible : retour au flux
+      resumeFrom(audio, audioSource(track), audio.currentTime);
+      audio.play().catch(() => {}); // garde le lecteur « en lecture » pendant le chargement
+    }, 2000);
+
     const listeners: [string, EventListener][] = [
       ["timeupdate", handleTimeUpdate],
       ["timeupdate", stepFade], // fondu en arrière-plan, sur les deux lecteurs
@@ -407,6 +451,7 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
     for (const deck of decks) for (const [type, fn] of listeners) deck.addEventListener(type, fn);
 
     return () => {
+      window.clearInterval(watchdog);
       for (const deck of decks) {
         deck.pause();
         for (const [type, fn] of listeners) deck.removeEventListener(type, fn);

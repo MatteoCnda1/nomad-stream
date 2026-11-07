@@ -150,7 +150,8 @@ export function streamRoutes({ plex }) {
 
       const params = {
         path: `/library/metadata/${id}`,
-        mediaIndex: "0",
+        // Version à lire quand la fiche en a plusieurs (index donné par /api/metadata)
+        mediaIndex: /^\d{1,2}$/.test(String(req.query.mediaIndex || "")) ? String(req.query.mediaIndex) : "0",
         partIndex: "0",
         protocol: "hls",
         directPlay: "0",
