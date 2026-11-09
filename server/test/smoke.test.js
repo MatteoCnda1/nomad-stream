@@ -59,6 +59,13 @@ test("le shell PWA est servi sur /", async () => {
   assert.match(res.headers.get("content-type") || "", /text\/html/);
 });
 
+test("version de l'appli servie : script principal de index.html, ou null sans client compilé", async () => {
+  const res = await fetch(`${gw.base}/api/version`);
+  assert.equal(res.headers.get("cache-control"), "no-store");
+  const { version } = await res.json();
+  assert.ok(version === null || /^\/assets\/index-[\w-]+\.js$/.test(version), String(version));
+});
+
 test("page de l'appli, service worker et manifest revérifiés à chaque ouverture", async () => {
   for (const p of ["/", "/index.html", "/sw.js", "/manifest.json"]) {
     const res = await fetch(`${gw.base}${p}`);

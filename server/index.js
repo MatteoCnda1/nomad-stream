@@ -1,6 +1,7 @@
 // Passerelle Nomad Stream : configuration, middlewares, montage des routes (routes/*.js) et
 // service du client PWA compilé.
 import express from "express";
+import fs from "fs";
 import cors from "cors";
 import dotenv from "dotenv";
 import path from "path";
@@ -150,6 +151,24 @@ app.use("/assets", express.static(path.join(clientDist, "assets"), {
   maxAge: "1y",
   immutable: true,
 }));
+
+// Version de l'appli servie : le nom (avec empreinte) de son script principal dans index.html,
+// qui change à chaque compilation. L'appli la compare à la sienne pour proposer « Actualiser »
+// quand une nouvelle version est déployée. Relu seulement si index.html a changé.
+let servedVersion = { mtimeMs: -1, version: null };
+app.get("/api/version", (req, res) => {
+  try {
+    const file = path.join(clientDist, "index.html");
+    const { mtimeMs } = fs.statSync(file);
+    if (mtimeMs !== servedVersion.mtimeMs) {
+      const match = /\/assets\/index-[\w-]+\.js/.exec(fs.readFileSync(file, "utf8"));
+      servedVersion = { mtimeMs, version: match ? match[0] : null };
+    }
+    res.set("Cache-Control", "no-store").json({ version: servedVersion.version });
+  } catch {
+    res.set("Cache-Control", "no-store").json({ version: null }); // client pas compilé (tests)
+  }
+});
 
 // Fichiers PWA racine (icônes, écrans de démarrage) avec cache modéré. Sauf la page de l'appli,
 // le service worker et le manifest : revérifiés à chaque ouverture (304 s'ils n'ont pas changé).
