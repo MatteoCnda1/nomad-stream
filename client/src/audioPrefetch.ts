@@ -3,7 +3,9 @@
 // (sur le disque, pas en mémoire). Le service worker les sert ensuite sous /precharge/<partId>,
 // requêtes partielles comprises : le titre suivant démarre sans attendre le réseau, et une baisse
 // de débit en cours de titre ne coupe plus la musique (le lecteur bascule sur la copie).
+// La musique téléchargée (playlists hors connexion, musicOffline.ts) passe avant tout le reste.
 import { MediaItem } from "./types";
+import { downloadedSource, forgetDownloaded, isDownloaded, isDownloadedSrc } from "./musicOffline";
 
 export const AUDIO_CACHE = "nomad-audio-v1"; // gardé lors des mises à jour de l'appli (voir sw.js)
 const PREFIX = "/precharge/";
@@ -17,7 +19,8 @@ const IDLE_MS = 20000;
 
 const pathOf = (partId: string) => `${PREFIX}${partId}`;
 export const streamUrlOf = (t: MediaItem) => t.streamUrl || `/api/stream/audio?key=${encodeURIComponent(t.partKey || "")}`;
-export const isPrecharge = (src: string) => src.includes(PREFIX);
+// Source lue depuis l'appareil : copie préchargée ou titre téléchargé
+export const isPrecharge = (src: string) => src.includes(PREFIX) || isDownloadedSrc(src);
 
 // Le service worker doit contrôler la page pour servir /precharge/ (HTTPS, dès la 2e ouverture)
 const usable = () =>
@@ -40,15 +43,21 @@ const load = () =>
     .then((keys) => keys.forEach((r) => ready.add(new URL(r.url).pathname.slice(PREFIX.length))))
     .catch(() => {}));
 
-// Source à donner au lecteur : la copie préchargée si elle est complète, sinon le flux
+// Source à donner au lecteur : le titre téléchargé, sinon la copie préchargée si elle est
+// complète, sinon le flux
 export function audioSource(track: MediaItem): string {
+  const downloaded = downloadedSource(track);
+  if (downloaded) return downloaded;
   return track.partId && ready.has(track.partId) && usable() ? pathOf(track.partId) : streamUrlOf(track);
 }
 
-export const isPrefetched = (track: MediaItem | null) => !!track?.partId && ready.has(track.partId) && usable();
+export const isPrefetched = (track: MediaItem | null) =>
+  isDownloaded(track) || (!!track?.partId && ready.has(track.partId) && usable());
 
-// Copie préchargée illisible (effacée par le navigateur faute de place) : on l'oublie
-export function forgetPrefetched(track: MediaItem) {
+// Copie illisible (effacée par le navigateur faute de place) : on l'oublie. `src` : la source
+// qui a échoué (titre téléchargé ou copie préchargée).
+export function forgetPrefetched(track: MediaItem, src?: string) {
+  if (src && isDownloadedSrc(src)) return forgetDownloaded(track);
   if (!track.partId) return;
   ready.delete(track.partId);
   const path = pathOf(track.partId);
@@ -63,7 +72,10 @@ export function setPrefetchGate(fn: () => boolean) {
 // Titres à précharger, par ordre de priorité. Un téléchargement qui n'en fait plus partie
 // (titre sauté, file changée) est abandonné.
 export function setPrefetchWanted(tracks: MediaItem[]) {
-  wanted = tracks.filter((t, i, all) => t.partId && all.findIndex((o) => o.partId === t.partId) === i);
+  // Un titre téléchargé n'a pas besoin d'être préchargé
+  wanted = tracks.filter(
+    (t, i, all) => t.partId && !isDownloaded(t) && all.findIndex((o) => o.partId === t.partId) === i,
+  );
   if (running && !wanted.some((t) => t.partId === running!.partId)) running.controller.abort();
   kickPrefetch();
 }
@@ -183,6 +195,16 @@ async function evict() {
     await cache.delete(e.request);
     ready.delete(e.partId);
     total -= e.size;
+  }
+}
+
+// Copie complète déjà préchargée : recopiée telle quelle quand on télécharge le titre
+export async function prefetchedCopy(partId: string): Promise<Response | undefined> {
+  if (!ready.has(partId)) return undefined;
+  try {
+    return await (await caches.open(AUDIO_CACHE)).match(pathOf(partId));
+  } catch {
+    return undefined;
   }
 }
 

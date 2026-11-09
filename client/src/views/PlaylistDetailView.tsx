@@ -4,6 +4,9 @@ import { useAudio } from "../context/AudioContext";
 import { SwipeRow } from "../components/SwipeRow";
 import { useWishlist } from "../context/WishlistContext";
 import { PlaylistArt } from "../components/PlaylistArt";
+import { PlaylistDownloadButton } from "../components/PlaylistDownloadButton";
+import { useMusicDownloads } from "../context/MusicDownloadsContext";
+import { useOnline } from "../hooks/useOnline";
 import {
   BigPlayButton,
   CollectionHeader,
@@ -20,6 +23,7 @@ import {
   ChevronDown,
   X,
   Plus,
+  RotateCw,
 } from "lucide-react";
 import { formatTrackDuration } from "../utils/format";
 
@@ -45,6 +49,8 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
   } = usePlaylist();
   const { playTrack, currentTrack, addToQueue, playNext } = useAudio();
   const { isSaved, toggle } = useWishlist();
+  const { statusOf, isTrackDownloaded, retry } = useMusicDownloads();
+  const online = useOnline();
 
   const [isEditing, setIsEditing] = useState(false);
   const [editTitle, setEditTitle] = useState("");
@@ -69,19 +75,23 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
   }
 
   const { tracks } = playlist;
+  const download = statusOf(playlist);
+  // Hors connexion, seuls les titres téléchargés se lisent
+  const available = (t: (typeof tracks)[0]) => online || isTrackDownloaded(t);
+  const playable = online ? tracks : tracks.filter(available);
   const totalMinutes = Math.round(
     tracks.reduce((sum, t) => sum + (t.duration || 0), 0) / 60000
   );
 
   const handlePlayAll = () => {
-    if (tracks.length > 0) {
-      playTrack(tracks[0], tracks, 0);
+    if (playable.length > 0) {
+      playTrack(playable[0], playable, 0);
     }
   };
 
   const handleShuffle = () => {
-    if (tracks.length === 0) return;
-    const shuffled = [...tracks].sort(() => Math.random() - 0.5);
+    if (playable.length === 0) return;
+    const shuffled = [...playable].sort(() => Math.random() - 0.5);
     playTrack(shuffled[0], shuffled, 0);
   };
 
@@ -151,13 +161,13 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
         <BigPlayButton
           onClick={handlePlayAll}
           label="Lire la playlist"
-          disabled={tracks.length === 0}
+          disabled={playable.length === 0}
         />
 
         <button
           type="button"
           onClick={handleShuffle}
-          disabled={tracks.length === 0}
+          disabled={playable.length === 0}
           aria-label="Lecture aléatoire"
           className="press w-11 h-11 rounded-full grid place-items-center text-muted hover:text-fg hover:bg-card disabled:opacity-40"
         >
@@ -174,6 +184,8 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
         >
           <ListPlus className="w-5 h-5" strokeWidth={1.9} />
         </button>
+
+        <PlaylistDownloadButton playlist={playlist} />
 
         <button
           type="button"
@@ -195,6 +207,36 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
           <Trash2 className="w-5 h-5" strokeWidth={1.9} />
         </button>
       </div>
+
+      {/* État du téléchargement */}
+      {download.enabled && download.total > 0 && (
+        <p role="status" className="mt-3 flex items-center gap-2 text-[13px] text-muted">
+          <span>
+            {download.active
+              ? online
+                ? `Téléchargement… ${download.done} sur ${download.total}`
+                : `En pause, hors connexion : ${download.done} sur ${download.total} téléchargés`
+              : `Téléchargée sur cet appareil · ${download.done} ${download.done > 1 ? "titres" : "titre"}`}
+            {download.failed > 0 &&
+              ` · ${download.failed} ${download.failed > 1 ? "titres indisponibles" : "titre indisponible"} sur le serveur`}
+          </span>
+          {download.failed > 0 && online && (
+            <button
+              type="button"
+              onClick={() => retry(playlist.id)}
+              className="press inline-flex items-center gap-1 font-semibold text-accent-text"
+            >
+              <RotateCw className="w-3.5 h-3.5" strokeWidth={2} />
+              Réessayer
+            </button>
+          )}
+        </p>
+      )}
+      {!online && !download.enabled && tracks.length > 0 && (
+        <p role="status" className="mt-3 text-[13px] text-muted">
+          Hors connexion : téléchargez la playlist la prochaine fois pour l'écouter sans réseau.
+        </p>
+      )}
 
       {/* Modal / zone d'édition des infos de la playlist */}
       {isEditing && (
@@ -332,6 +374,8 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
             {tracks.map((track, idx) => {
               const isCurrent = currentTrack?.id === track.id;
               const saved = isSaved(track.id);
+              const downloaded = download.enabled && isTrackDownloaded(track);
+              const canPlay = available(track);
 
               return (
                 <SwipeRow
@@ -343,7 +387,9 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
                   }}
                 >
                   <div
-                    className="group grid grid-cols-[28px_minmax(0,1fr)_56px_auto] sm:grid-cols-[28px_minmax(0,1fr)_70px_auto] gap-2 sm:gap-4 items-center px-3 py-2 rounded-xl transition-colors hover:bg-card"
+                    className={`group grid grid-cols-[28px_minmax(0,1fr)_56px_auto] sm:grid-cols-[28px_minmax(0,1fr)_70px_auto] gap-2 sm:gap-4 items-center px-3 py-2 rounded-xl transition-colors hover:bg-card ${
+                      canPlay ? "" : "opacity-40"
+                    }`}
                   >
                     {/* Numéro ou indicateur */}
                     <span
@@ -357,7 +403,9 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
                     {/* Titre & sous-titre cliquables */}
                     <button
                       type="button"
-                      onClick={() => playTrack(track)}
+                      onClick={() =>
+                        canPlay ? playTrack(track) : showToast("Hors connexion : ce titre n'est pas téléchargé")
+                      }
                       className="min-w-0 text-left py-1"
                     >
                       <span
@@ -367,8 +415,22 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
                       >
                         {track.title}
                       </span>
-                      <span className="block text-[13px] text-muted truncate">
-                        {[track.grandparentTitle, track.parentTitle].filter(Boolean).join(" · ")}
+                      <span className="flex items-center gap-1.5 text-[13px] text-muted min-w-0">
+                        {downloaded && (
+                          <span
+                            role="img"
+                            aria-label="Téléchargé"
+                            title="Téléchargé"
+                            className="w-3.5 h-3.5 rounded-full bg-accent text-white grid place-items-center flex-shrink-0"
+                          >
+                            <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                              <path d="M12 5v14M5 12l7 7 7-7" />
+                            </svg>
+                          </span>
+                        )}
+                        <span className="truncate">
+                          {[track.grandparentTitle, track.parentTitle].filter(Boolean).join(" · ")}
+                        </span>
                       </span>
                     </button>
 

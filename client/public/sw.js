@@ -3,6 +3,8 @@ const CACHE_NAME = 'nomad-stream-v7';
 const OFFLINE_CACHE = 'nomad-offline-v1';
 // Musique préchargée pendant l'écoute (#56, client/src/audioPrefetch.ts) : gardée aussi
 const AUDIO_CACHE = 'nomad-audio-v1';
+// Playlists téléchargées (client/src/musicOffline.ts) : jamais purgé non plus
+const MUSIC_CACHE = 'nomad-music-v1';
 const STATIC_ASSETS = [
   '/',
   '/index.html',
@@ -26,7 +28,7 @@ self.addEventListener('activate', (event) => {
     caches.keys().then((keys) => {
       return Promise.all(
         keys.map((key) => {
-          if (key !== CACHE_NAME && key !== OFFLINE_CACHE && key !== AUDIO_CACHE) {
+          if (key !== CACHE_NAME && key !== OFFLINE_CACHE && key !== AUDIO_CACHE && key !== MUSIC_CACHE) {
             return caches.delete(key);
           }
         })
@@ -74,13 +76,17 @@ async function serveCached(request, cacheName) {
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
 
-  // 1. Vidéos téléchargées et musique préchargée
+  // 1. Vidéos téléchargées, musique préchargée et playlists téléchargées
   if (url.origin === self.location.origin && url.pathname.startsWith('/offline/')) {
     event.respondWith(serveCached(event.request, OFFLINE_CACHE));
     return;
   }
   if (url.origin === self.location.origin && url.pathname.startsWith('/precharge/')) {
     event.respondWith(serveCached(event.request, AUDIO_CACHE));
+    return;
+  }
+  if (url.origin === self.location.origin && url.pathname.startsWith('/offline-audio/')) {
+    event.respondWith(serveCached(event.request, MUSIC_CACHE));
     return;
   }
 
@@ -110,7 +116,8 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // 4. Images Plex - Stale-While-Revalidate (les affiches des téléchargements sont dans OFFLINE_CACHE)
+  // 4. Images Plex - Stale-While-Revalidate (les affiches des téléchargements sont dans OFFLINE_CACHE,
+  //    les pochettes des playlists téléchargées dans MUSIC_CACHE)
   if (url.pathname.startsWith('/api/image')) {
     event.respondWith(
       caches.match(event.request).then((cached) => {

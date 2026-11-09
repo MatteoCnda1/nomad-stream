@@ -368,7 +368,7 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
       if (track && isPrecharge(audio.src)) {
         // Copie préchargée illisible (effacée par le navigateur) : le flux prend le relais, même titre
         console.warn("Copie préchargée illisible, retour au flux");
-        forgetPrefetched(track);
+        forgetPrefetched(track, audio.src);
         resumeFrom(audio, audioSource(track), at);
         return;
       }
@@ -431,7 +431,7 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
       stall.retries++;
       stall.retryAt = audio.currentTime;
       console.warn(`Lecture bloquée depuis ${STALL_MS / 1000} s : relance ${stall.retries}/${STALL_RETRIES}`);
-      if (isPrecharge(audio.src)) forgetPrefetched(track); // copie illisible : retour au flux
+      if (isPrecharge(audio.src)) forgetPrefetched(track, audio.src); // copie illisible : retour au flux
       resumeFrom(audio, audioSource(track), audio.currentTime);
       audio.play().catch(() => {}); // garde le lecteur « en lecture » pendant le chargement
     }, 2000);
