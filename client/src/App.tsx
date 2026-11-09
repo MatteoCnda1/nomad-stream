@@ -20,6 +20,7 @@ import { GenreMixView } from "./views/GenreMixView";
 import { PlaylistModal } from "./components/PlaylistModal";
 import { GlobalToast } from "./components/GlobalToast";
 import { InstallPrompt } from "./components/InstallPrompt";
+import { UpdateBanner } from "./components/UpdateBanner";
 import { PlaylistProvider, usePlaylist } from "./context/PlaylistContext";
 import { MusicDownloadsProvider } from "./context/MusicDownloadsContext";
 import { ProfileProvider, useProfiles } from "./context/ProfileContext";
@@ -346,6 +347,9 @@ const Shell: React.FC = () => {
 
       {/* Notifications toast globales */}
       <GlobalToast />
+
+      {/* Nouvelle version déployée : proposer d'actualiser (pas pendant une vidéo) */}
+      {!activeVideoMedia && !launchingItem && <UpdateBanner />}
 
       {/* Invite d'installation (une fois, hors appli installée et hors lecture vidéo) */}
       {!activeVideoMedia && !launchingItem && <InstallPrompt />}
