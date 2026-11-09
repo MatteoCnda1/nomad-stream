@@ -21,6 +21,7 @@ import { PlaylistModal } from "./components/PlaylistModal";
 import { GlobalToast } from "./components/GlobalToast";
 import { InstallPrompt } from "./components/InstallPrompt";
 import { PlaylistProvider, usePlaylist } from "./context/PlaylistContext";
+import { MusicDownloadsProvider } from "./context/MusicDownloadsContext";
 import { SearchView } from "./views/SearchView";
 import { CarModeView } from "./views/CarModeView";
 import { WishlistView } from "./views/WishlistView";
@@ -288,7 +289,11 @@ const Shell: React.FC = () => {
             {tab === "account" && <AccountView onNavigate={handleTabChange} />}
 
             {tab === "downloads" && (
-              <DownloadsView onPlay={(entry) => handlePlayMedia(entry.media)} onExplore={() => handleTabChange("home")} />
+              <DownloadsView
+                onPlay={(entry) => handlePlayMedia(entry.media)}
+                onOpenPlaylist={handleOpenPlaylist}
+                onExplore={() => handleTabChange("home")}
+              />
             )}
 
             {tab === "car" && (
@@ -352,9 +357,11 @@ export const App: React.FC = () => (
       <WishlistProvider>
         <DownloadsProvider>
           <PlaylistProvider>
-            <AudioProvider>
-              <Shell />
-            </AudioProvider>
+            <MusicDownloadsProvider>
+              <AudioProvider>
+                <Shell />
+              </AudioProvider>
+            </MusicDownloadsProvider>
           </PlaylistProvider>
         </DownloadsProvider>
       </WishlistProvider>

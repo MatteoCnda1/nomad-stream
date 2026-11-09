@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useState, useRef } from "react";
 import { MediaItem, Playlist } from "../types";
+import { partIdOf } from "../musicOffline";
 
 interface AddResult {
   addedCount: number;
@@ -32,7 +33,13 @@ function readStoredPlaylists(): Playlist[] {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
+    if (!Array.isArray(parsed)) return [];
+    // Titres enregistrés sans l'identifiant de leur fichier (versions précédentes) : il se
+    // retrouve dans la clé du fichier. Sans lui, ni préchargement ni téléchargement.
+    return parsed.map((pl: Playlist) => ({
+      ...pl,
+      tracks: (pl.tracks || []).map((t) => (t.partId ? t : { ...t, partId: partIdOf(t) })),
+    }));
   } catch {
     return [];
   }
@@ -117,6 +124,7 @@ export function PlaylistProvider({ children }: { children: React.ReactNode }) {
       duration: t.duration,
       durationMinutes: t.durationMinutes || Math.round(t.duration / 60000),
       partKey: t.partKey,
+      partId: partIdOf(t),
       trackNumber: t.trackNumber,
       genres: t.genres || [],
       directors: [],
