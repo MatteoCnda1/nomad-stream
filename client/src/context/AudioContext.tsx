@@ -540,6 +540,7 @@ export function AudioProvider({ children }: { children: React.ReactNode }) {
         reportTimeline({
           ratingKey: currentTrack.id,
           key: currentTrack.key,
+          type: "track",
           state: "playing",
           time: audioRef.current.currentTime * 1000,
           duration: (audioRef.current.duration || currentTrack.duration / 1000) * 1000,

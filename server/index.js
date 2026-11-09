@@ -21,6 +21,7 @@ import { radioRoutes } from "./routes/radio.js";
 import { genreRoutes } from "./routes/genres.js";
 import { profileRoutes } from "./routes/profiles.js";
 import { createUserData } from "./userdata.js";
+import { createProgress } from "./progress.js";
 import { createLibrarySearch } from "./search.js";
 import { createMusicGenres, parseFolders } from "./genres.js";
 import { createAvailability } from "./availability.js";
@@ -96,10 +97,18 @@ app.post("/api/auth/logout", auth.handleLogout);
 app.get("/api/auth/check", auth.handleCheck);
 if (auth.enabled) console.log("🔒 Code d'accès actif (auth par cookie)");
 
+// Profils (#40) et progression propre à chaque profil (#39) : le profil vient du cookie posé par
+// l'appli ; les réponses des profils non liés à Plex portent leur propre position de reprise
+const userData = createUserData({ dir: process.env.NOMAD_DATA_DIR || path.join(__dirname, ".data") });
+const progress = createProgress({ userData, plexFetch: plex.plexFetch, availability });
+app.use("/api", (req, res, next) =>
+  req.path.startsWith("/stream/") || req.path.startsWith("/image") ? next() : progress.middleware(req, res, next),
+);
+
 // -------------------------------------------------------------
 // ROUTES API
 // -------------------------------------------------------------
-app.use(catalogRoutes({ plex, availability, cache: createMemoryCache() }));
+app.use(catalogRoutes({ plex, availability, progress, cache: createMemoryCache() }));
 // Index de recherche construit peu après le démarrage (la première recherche ne l'attend pas),
 // puis reconstruit en arrière-plan quand il a plus de NOMAD_SEARCH_TTL_MIN minutes
 const librarySearch = createLibrarySearch({
@@ -118,10 +127,7 @@ app.use(genreRoutes({
   genres: createMusicGenres({ folders: parseFolders(process.env.NOMAD_MUSIC_GENRE_FOLDERS) }),
 }));
 // Profils, playlists et « Ma liste » (#40). Hors des caches : ces données ne se recréent pas.
-app.use(profileRoutes({
-  userData: createUserData({ dir: process.env.NOMAD_DATA_DIR || path.join(__dirname, ".data") }),
-  librarySearch,
-}));
+app.use(profileRoutes({ userData, librarySearch }));
 app.use(streamRoutes({ plex }));
 app.use(imageRoutes({
   plex,

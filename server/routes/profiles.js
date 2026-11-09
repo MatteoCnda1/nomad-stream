@@ -8,6 +8,7 @@ import {
   isPlaylistId,
   isProfileId,
   LIMITS,
+  withLinks,
 } from "../userdata.js";
 
 export function profileRoutes({ userData, librarySearch }) {
@@ -33,7 +34,7 @@ export function profileRoutes({ userData, librarySearch }) {
     });
 
   router.get("/api/profiles", handle(async (req, res) => {
-    res.json({ profiles: await userData.listProfiles() });
+    res.json({ profiles: withLinks(await userData.listProfiles()) });
   }));
 
   router.post("/api/profiles", handle(async (req, res) => {

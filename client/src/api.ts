@@ -152,6 +152,7 @@ type TimelineParams = {
   state: "playing" | "paused" | "stopped";
   time: number;
   duration: number;
+  type?: "track"; // musique : pas de position de reprise propre à un profil
 };
 
 // Les réponses mises en cache contiennent la position de reprise : on les oublie après chaque rapport

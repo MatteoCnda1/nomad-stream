@@ -21,6 +21,7 @@ import {
   subscribeQueue,
   updateProfile,
 } from "../profiles";
+import { clearApiCache } from "../api";
 
 type Status = "loading" | "ready" | "unreachable";
 
@@ -36,7 +37,7 @@ interface ProfileContextType {
   closePicker: () => void;
   select: (id: string) => void;
   create: (name: string, color: string) => Promise<Profile>;
-  update: (id: string, fields: Partial<Pick<Profile, "name" | "color">>) => Promise<void>;
+  update: (id: string, fields: Partial<Pick<Profile, "name" | "color" | "plex">>) => Promise<void>;
   remove: (id: string) => Promise<void>;
   refresh: () => void;
 }
@@ -123,6 +124,7 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
 
   const select = (id: string) => {
     setCurrentProfileId(id);
+    clearApiCache(); // réponses gardées en mémoire : positions de reprise de l'ancien profil
     setRemote(null);
     setProfileId(id);
     setPickerOpen(false);
@@ -134,9 +136,11 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
     return profile;
   };
 
-  const update = async (id: string, fields: Partial<Pick<Profile, "name" | "color">>) => {
-    const updated = await updateProfile(id, fields);
-    keepProfiles(profiles.map((p) => (p.id === id ? updated : p)));
+  const update = async (id: string, fields: Partial<Pick<Profile, "name" | "color" | "plex">>) => {
+    await updateProfile(id, fields);
+    // Lien avec Plex : il change aussi pour les autres profils
+    keepProfiles(await fetchProfiles());
+    if (fields.plex !== undefined) clearApiCache();
   };
 
   const remove = async (id: string) => {
