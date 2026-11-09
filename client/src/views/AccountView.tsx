@@ -10,6 +10,9 @@ import { useInstall } from "../hooks/useInstall";
 import { IOSInstallSteps } from "../components/InstallPrompt";
 import { EqualizerPanel } from "../components/EqualizerPanel";
 import { MAX_CROSSFADE, isIOS, setCrossfadeSeconds, useCrossfade } from "../crossfade";
+import { useProfiles } from "../context/ProfileContext";
+import { ProfileAvatar } from "../components/ProfilePicker";
+import { usePlaylist } from "../context/PlaylistContext";
 
 interface AccountViewProps {
   onNavigate: (tab: string) => void;
@@ -52,6 +55,8 @@ export const AccountView: React.FC<AccountViewProps> = ({ onNavigate }) => {
   const install = useInstall();
   const { entries } = useWishlist();
   const crossfade = useCrossfade();
+  const profile = useProfiles();
+  const { playlists } = usePlaylist();
   const [cacheCleared, setCacheCleared] = useState(false);
   // Musique préchargée pendant l'écoute (#56) : place occupée sur cet appareil
   const [prefetched, setPrefetched] = useState<{ tracks: number; bytes: number } | null>(null);
@@ -78,19 +83,38 @@ export const AccountView: React.FC<AccountViewProps> = ({ onNavigate }) => {
     <div className="pt-[max(18px,env(safe-area-inset-top))] lg:pt-1 max-w-[1160px]">
       {/* En-tête */}
       <div className="flex flex-col sm:flex-row sm:items-center gap-5 sm:gap-[22px]">
-        <Avatar name={serverName} size={92} />
+        {profile.current ? <ProfileAvatar profile={profile.current} size={92} /> : <Avatar name={serverName} size={92} />}
         <div className="flex-1 min-w-0">
-          <h1 className="text-[34px] tracking-[-0.03em] font-bold truncate">{serverName}</h1>
+          <h1 className="text-[34px] tracking-[-0.03em] font-bold truncate">{profile.current?.name ?? serverName}</h1>
           <div className="mt-1.5 flex flex-wrap gap-x-3.5 gap-y-1.5 text-[15px] text-muted">
-            <span>Plex Media Server</span>
-            {version && (
+            {profile.current ? (
               <>
+                <span>
+                  {playlists.length} {playlists.length > 1 ? "playlists" : "playlist"} · {entries.length} dans ma liste
+                </span>
                 <span aria-hidden="true">·</span>
-                <span>Version {version}</span>
+                <span role="status">
+                  {profile.pending ? "Changements en attente d'envoi" : "Retrouvé sur tous vos appareils"}
+                </span>
               </>
+            ) : (
+              <span>
+                {profile.status === "unreachable"
+                  ? "Passerelle injoignable : données gardées sur cet appareil"
+                  : "Aucun profil choisi"}
+              </span>
             )}
           </div>
         </div>
+        {(profile.current || profile.status === "ready") && (
+          <button
+            type="button"
+            onClick={profile.openPicker}
+            className="press self-start sm:self-center h-11 px-5 rounded-full border border-line2 hover:bg-card text-sm font-semibold"
+          >
+            Changer de profil
+          </button>
+        )}
         <ThemeToggle className="hidden sm:grid border border-line2 hover:bg-card" />
       </div>
 

@@ -22,6 +22,8 @@ import { GlobalToast } from "./components/GlobalToast";
 import { InstallPrompt } from "./components/InstallPrompt";
 import { PlaylistProvider, usePlaylist } from "./context/PlaylistContext";
 import { MusicDownloadsProvider } from "./context/MusicDownloadsContext";
+import { ProfileProvider, useProfiles } from "./context/ProfileContext";
+import { ProfilePicker } from "./components/ProfilePicker";
 import { SearchView } from "./views/SearchView";
 import { CarModeView } from "./views/CarModeView";
 import { WishlistView } from "./views/WishlistView";
@@ -30,7 +32,7 @@ import { DownloadsView } from "./views/DownloadsView";
 import { MediaItem, MediaDetail } from "./types";
 import { fetchMetadata } from "./api";
 import { offlineUrl } from "./offline";
-import { WifiOff } from "lucide-react";
+import { Loader2, WifiOff } from "lucide-react";
 import { AuthGate } from "./components/AuthGate";
 import { Tab, useHistoryOverlay, useRouter } from "./router";
 
@@ -351,20 +353,46 @@ const Shell: React.FC = () => {
   );
 };
 
+// Choix du profil (#40). Les données du profil (playlists, « Ma liste », musique téléchargée,
+// lecture en cours) sont montées sous une clé propre au profil : changer de profil repart d'un
+// état propre, sans rien mélanger. Passerelle injoignable et aucun profil choisi : l'appli
+// s'ouvre quand même, avec les données gardées sur l'appareil.
+const ProfileGate: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { status, profileId, pickerOpen } = useProfiles();
+  if (!profileId && status === "loading") {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-bg">
+        <Loader2 className="w-7 h-7 text-muted animate-spin" />
+      </div>
+    );
+  }
+  const needPicker = pickerOpen || (!profileId && status === "ready");
+  return (
+    <>
+      {needPicker && <ProfilePicker />}
+      {(!needPicker || profileId) && <React.Fragment key={profileId ?? "appareil"}>{children}</React.Fragment>}
+    </>
+  );
+};
+
 export const App: React.FC = () => (
   <ThemeProvider>
     <AuthGate>
-      <WishlistProvider>
+      <ProfileProvider>
         <DownloadsProvider>
-          <PlaylistProvider>
-            <MusicDownloadsProvider>
-              <AudioProvider>
-                <Shell />
-              </AudioProvider>
-            </MusicDownloadsProvider>
-          </PlaylistProvider>
+          <ProfileGate>
+            <WishlistProvider>
+              <PlaylistProvider>
+                <MusicDownloadsProvider>
+                  <AudioProvider>
+                    <Shell />
+                  </AudioProvider>
+                </MusicDownloadsProvider>
+              </PlaylistProvider>
+            </WishlistProvider>
+          </ProfileGate>
         </DownloadsProvider>
-      </WishlistProvider>
+      </ProfileProvider>
     </AuthGate>
   </ThemeProvider>
 );

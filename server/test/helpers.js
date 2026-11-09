@@ -24,6 +24,8 @@ export function freePort() {
 // Plex pointe vers un port fermé : toute requête vers lui échoue immédiatement.
 export function spawnServer(env = {}) {
   const cwd = mkdtempSync(path.join(tmpdir(), "nomad-test-"));
+  // Données des profils dans le dossier temporaire, jamais dans server/.data
+  env = { NOMAD_DATA_DIR: path.join(cwd, "data"), ...env };
   const child = spawn(process.execPath, [SERVER], {
     cwd,
     // Index de recherche construit à la demande : pas d'appels à Plex imprévus pendant les tests

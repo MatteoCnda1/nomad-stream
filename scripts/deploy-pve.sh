@@ -12,7 +12,7 @@ cd "$(dirname "$0")/.."
 
 (cd client && npm run build)
 
-tar -czf - --exclude=node_modules --exclude=.cache server client/dist | ssh -J "$JUMP" "root@$HOST" '
+tar -czf - --exclude=node_modules --exclude=.cache --exclude=.data server client/dist | ssh -J "$JUMP" "root@$HOST" '
   set -e
   # Le serveur refuse de démarrer sans PLEX_TOKEN : ne rien toucher tant que le LXC ne le fournit pas
   if ! grep -qs "^PLEX_TOKEN=." /etc/nomad-stream.env && ! systemctl show nomad-stream -p Environment | grep -q "PLEX_TOKEN="; then

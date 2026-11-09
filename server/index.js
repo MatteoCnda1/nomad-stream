@@ -19,6 +19,8 @@ import { playbackRoutes } from "./routes/playback.js";
 import { searchRoutes } from "./routes/search.js";
 import { radioRoutes } from "./routes/radio.js";
 import { genreRoutes } from "./routes/genres.js";
+import { profileRoutes } from "./routes/profiles.js";
+import { createUserData } from "./userdata.js";
 import { createLibrarySearch } from "./search.js";
 import { createMusicGenres, parseFolders } from "./genres.js";
 import { createAvailability } from "./availability.js";
@@ -81,7 +83,8 @@ app.use(compression({
 }));
 
 app.use(cors());
-app.use(express.json());
+// 5 Mo : une playlist de quelques milliers de titres, ou l'import des données d'un appareil
+app.use(express.json({ limit: "5mb" }));
 
 // Authentification par code d'accès partagé (opt-in : active seulement si ACCESS_CODE est défini).
 // trust proxy : lire x-forwarded-proto derrière `tailscale serve` pour poser un cookie Secure en HTTPS.
@@ -113,6 +116,11 @@ app.use(radioRoutes({ plex, librarySearch, cache: createMemoryCache({ maxEntries
 app.use(genreRoutes({
   librarySearch,
   genres: createMusicGenres({ folders: parseFolders(process.env.NOMAD_MUSIC_GENRE_FOLDERS) }),
+}));
+// Profils, playlists et « Ma liste » (#40). Hors des caches : ces données ne se recréent pas.
+app.use(profileRoutes({
+  userData: createUserData({ dir: process.env.NOMAD_DATA_DIR || path.join(__dirname, ".data") }),
+  librarySearch,
 }));
 app.use(streamRoutes({ plex }));
 app.use(imageRoutes({

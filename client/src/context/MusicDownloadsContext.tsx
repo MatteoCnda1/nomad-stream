@@ -6,6 +6,8 @@ import { MediaItem, Playlist } from "../types";
 import { usePlaylist } from "./PlaylistContext";
 import { prefetchedCopy } from "../audioPrefetch";
 import { requestPersistence } from "../offline";
+import { useProfiles } from "./ProfileContext";
+import { localKey, readLocal } from "../profiles";
 import {
   PermanentError,
   cacheImages,
@@ -37,19 +39,39 @@ interface MusicDownloadsContextType {
   downloadedPlaylists: Playlist[];
 }
 
-const STORAGE_KEY = "nomad-music-downloads";
 const FAILED_KEY = "nomad-music-failed"; // titres disparus du serveur, gardés d'une ouverture à l'autre
 const PARALLEL = 2;
 const RETRY_MS = 30000; // coupure réseau : nouvel essai après
 const MusicDownloadsContext = createContext<MusicDownloadsContextType | null>(null);
 
-function readStored(): string[] {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
-    return Array.isArray(parsed) ? parsed.filter((id) => typeof id === "string") : [];
-  } catch {
-    return [];
+const readIds = (key: string): string[] => {
+  const parsed = readLocal<unknown>(key, []);
+  return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === "string") : [];
+};
+
+// Titres et pochettes téléchargés pour les autres profils de cet appareil : gardés aussi
+function otherProfilesKeep(currentKey: string) {
+  const parts = new Set<string>();
+  const images = new Set<string>();
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (!key || key === currentKey || !/^nomad-music-downloads-p_[a-f0-9]{12}$/.test(key)) continue;
+    const ids = new Set(readIds(key));
+    const playlists = readLocal<Playlist[]>(key.replace("music-downloads", "playlists"), []);
+    for (const pl of Array.isArray(playlists) ? playlists : []) {
+      if (!ids.has(pl.id)) continue;
+      for (const t of pl.tracks || []) {
+        const id = partIdOf(t);
+        if (id) parts.add(id);
+        if (t.thumb) {
+          images.add(t.thumb);
+          images.add(`${t.thumb}${t.thumb.includes("?") ? "&" : "?"}format=jpeg`);
+        }
+        if (t.parentThumb) images.add(t.parentThumb);
+      }
+    }
   }
+  return { parts, images };
 }
 
 function readFailed(): Record<string, string> {
@@ -65,8 +87,17 @@ const imageOf = (t: MediaItem) => t.thumb || t.parentThumb || null;
 
 export function MusicDownloadsProvider({ children }: { children: React.ReactNode }) {
   const { playlists } = usePlaylist();
+  const { profileId, remote } = useProfiles();
+  const storageKey = localKey("music-downloads", profileId);
   const supported = musicOfflineSupported();
-  const [enabledIds, setEnabledIds] = useState<string[]>(readStored);
+  // Premier profil choisi sur l'appareil : les téléchargements d'avant les profils le suivent
+  // (ses playlists, versées dans le profil, gardent leurs identifiants)
+  const [enabledIds, setEnabledIds] = useState<string[]>(() =>
+    profileId && localStorage.getItem(storageKey) === null ? readIds(localKey("music-downloads", null)) : readIds(storageKey),
+  );
+  // Rien n'est effacé tant que les playlists du profil ne sont pas arrivées de la passerelle :
+  // une copie locale encore vide ferait tout disparaître
+  const settled = !profileId || remote?.profileId === profileId;
   const [, setVersion] = useState(0); // le contenu du cache a changé
   const [loaded, setLoaded] = useState(false);
   const [failed, setFailed] = useState<Record<string, string>>(readFailed); // partId -> erreur définitive
@@ -93,18 +124,18 @@ export function MusicDownloadsProvider({ children }: { children: React.ReactNode
     };
   }, []);
 
-  // Playlist supprimée : son téléchargement aussi
+  // Playlist supprimée : son téléchargement aussi (son identifiant reste noté, sans effet)
   const existing = useMemo(
     () => enabledIds.filter((id) => playlists.some((p) => p.id === id)),
     [enabledIds, playlists],
   );
   useEffect(() => {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(existing));
+      localStorage.setItem(storageKey, JSON.stringify(enabledIds));
     } catch {
       // Stockage plein
     }
-  }, [existing]);
+  }, [enabledIds, storageKey]);
 
   useEffect(() => {
     try {
@@ -148,7 +179,7 @@ export function MusicDownloadsProvider({ children }: { children: React.ReactNode
     for (const track of wantedRef.current) {
       if (controllers.current.size >= PARALLEL) break;
       const id = partIdOf(track)!;
-      if (hasDownloaded(id) || controllers.current.has(id) || failedRef.current[id]) continue;
+      if (hasDownloaded(id) || controllers.current.has(id) || failedRef.current[id] || track.unavailable) continue;
       if ((retryAt.current.get(id) ?? 0) > now) continue;
       const controller = new AbortController();
       controllers.current.set(id, controller);
@@ -195,7 +226,11 @@ export function MusicDownloadsProvider({ children }: { children: React.ReactNode
           .concat(wanted.map(imageOf).filter((u): u is string => !!u)),
       ),
     ];
-    const timer = window.setTimeout(() => sweepDownloaded(keep, new Set(images)), 1000);
+    const timer = window.setTimeout(() => {
+      if (!settled) return;
+      const others = otherProfilesKeep(storageKey);
+      sweepDownloaded(new Set([...keep, ...others.parts]), new Set([...images, ...others.images]));
+    }, 1000);
     pump();
     const controller = new AbortController();
     if (online) cacheImages(images, controller.signal);
@@ -203,7 +238,7 @@ export function MusicDownloadsProvider({ children }: { children: React.ReactNode
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [wanted, loaded, online, pump]);
+  }, [wanted, loaded, online, pump, storageKey, settled]);
 
   useEffect(() => () => window.clearTimeout(retryTimer.current), []);
 
@@ -229,15 +264,23 @@ export function MusicDownloadsProvider({ children }: { children: React.ReactNode
 
   const statusOf = (playlist: Playlist): PlaylistDownload => {
     const enabled = existing.includes(playlist.id);
-    const ids = [...new Set(playlist.tracks.map(partIdOf).filter((id): id is string => !!id))];
-    const done = ids.filter(hasDownloaded).length;
-    const failedCount = ids.filter((id) => !hasDownloaded(id) && failed[id]).length;
+    const ids = new Set<string>();
+    const lost = new Set<string>(); // introuvables dans la bibliothèque (#67)
+    for (const t of playlist.tracks) {
+      const id = partIdOf(t);
+      if (!id) continue;
+      ids.add(id);
+      if (t.unavailable) lost.add(id);
+    }
+    const all = [...ids];
+    const done = all.filter(hasDownloaded).length;
+    const failedCount = all.filter((id) => !hasDownloaded(id) && (failed[id] || lost.has(id))).length;
     return {
       enabled,
-      total: ids.length,
+      total: all.length,
       done,
       failed: failedCount,
-      active: enabled && done + failedCount < ids.length,
+      active: enabled && done + failedCount < all.length,
     };
   };
 

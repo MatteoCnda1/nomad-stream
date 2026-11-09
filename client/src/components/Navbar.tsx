@@ -4,6 +4,8 @@ import { useServerStatus } from "../hooks/useServerStatus";
 import { greeting } from "../utils/format";
 import { Avatar, Pills, ThemeToggle } from "./ui";
 import { HomeFilter } from "../views/HomeView";
+import { useProfiles } from "../context/ProfileContext";
+import { ProfileAvatar } from "./ProfilePicker";
 
 interface NavbarProps {
   currentTab: string;
@@ -33,6 +35,9 @@ export const Navbar: React.FC<NavbarProps> = ({
   hideOnMobile,
 }) => {
   const { serverName } = useServerStatus();
+  const { current } = useProfiles();
+  const who = current?.name ?? serverName;
+  const avatar = (size: number) => (current ? <ProfileAvatar profile={current} size={size} /> : <Avatar name={serverName} size={size} />);
 
   return (
     <header
@@ -40,11 +45,11 @@ export const Navbar: React.FC<NavbarProps> = ({
     >
       {/* Mobile : avatar + salutation */}
       <button type="button" onClick={() => setTab("account")} aria-label="Compte" className="lg:hidden">
-        <Avatar name={serverName} size={40} />
+        {avatar(40)}
       </button>
       <div className="lg:hidden flex-1 min-w-0">
         <div className="text-[13px] text-muted">{greeting()}</div>
-        <div className="text-lg font-semibold tracking-[-0.01em] truncate">{serverName}</div>
+        <div className="text-lg font-semibold tracking-[-0.01em] truncate">{who}</div>
       </div>
 
       {/* Desktop : champ de recherche */}
@@ -82,8 +87,8 @@ export const Navbar: React.FC<NavbarProps> = ({
             currentTab === "account" ? "bg-surface2" : ""
           }`}
         >
-          <Avatar name={serverName} size={36} />
-          <span className="text-sm font-medium max-w-[140px] truncate">{serverName}</span>
+          {avatar(36)}
+          <span className="text-sm font-medium max-w-[140px] truncate">{who}</span>
         </button>
       </div>
     </header>

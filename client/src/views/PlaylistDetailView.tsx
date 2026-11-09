@@ -76,9 +76,11 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
 
   const { tracks } = playlist;
   const download = statusOf(playlist);
-  // Hors connexion, seuls les titres téléchargés se lisent
-  const available = (t: (typeof tracks)[0]) => online || isTrackDownloaded(t);
-  const playable = online ? tracks : tracks.filter(available);
+  // Hors connexion, seuls les titres téléchargés se lisent ; un titre que la passerelle n'a pas
+  // retrouvé dans la bibliothèque (réimporté puis supprimé, #67) ne se lit pas du tout
+  // (sauf s'il est déjà sur l'appareil : la copie téléchargée se lit toujours)
+  const available = (t: (typeof tracks)[0]) => isTrackDownloaded(t) || (!t.unavailable && online);
+  const playable = tracks.filter(available);
   const totalMinutes = Math.round(
     tracks.reduce((sum, t) => sum + (t.duration || 0), 0) / 60000
   );
@@ -404,7 +406,13 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
                     <button
                       type="button"
                       onClick={() =>
-                        canPlay ? playTrack(track) : showToast("Hors connexion : ce titre n'est pas téléchargé")
+                        canPlay
+                          ? playTrack(track)
+                          : showToast(
+                              track.unavailable
+                                ? "Titre introuvable dans la bibliothèque"
+                                : "Hors connexion : ce titre n'est pas téléchargé",
+                            )
                       }
                       className="min-w-0 text-left py-1"
                     >
@@ -429,7 +437,9 @@ export const PlaylistDetailView: React.FC<PlaylistDetailViewProps> = ({
                           </span>
                         )}
                         <span className="truncate">
-                          {[track.grandparentTitle, track.parentTitle].filter(Boolean).join(" · ")}
+                          {track.unavailable
+                            ? "Introuvable dans la bibliothèque"
+                            : [track.grandparentTitle, track.parentTitle].filter(Boolean).join(" · ")}
                         </span>
                       </span>
                     </button>
