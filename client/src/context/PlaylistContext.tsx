@@ -1,6 +1,7 @@
-import React, { createContext, useContext, useEffect, useState, useRef } from "react";
+import React, { createContext, useContext, useMemo, useState, useRef } from "react";
 import { MediaItem, Playlist } from "../types";
 import { partIdOf } from "../musicOffline";
+import { useSyncedList } from "../hooks/useSyncedList";
 
 interface AddResult {
   addedCount: number;
@@ -25,39 +26,22 @@ interface PlaylistContextType {
   showToast: (msg: string) => void;
 }
 
-const STORAGE_KEY = "nomad-playlists";
 const PlaylistContext = createContext<PlaylistContextType | null>(null);
 
-function readStoredPlaylists(): Playlist[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    // Titres enregistrés sans l'identifiant de leur fichier (versions précédentes) : il se
-    // retrouve dans la clé du fichier. Sans lui, ni préchargement ni téléchargement.
-    return parsed.map((pl: Playlist) => ({
-      ...pl,
-      tracks: (pl.tracks || []).map((t) => (t.partId ? t : { ...t, partId: partIdOf(t) })),
-    }));
-  } catch {
-    return [];
-  }
-}
+// Titres enregistrés sans l'identifiant de leur fichier (versions précédentes) : il se retrouve
+// dans la clé du fichier. Sans lui, ni préchargement ni téléchargement.
+const withPartIds = (pl: Playlist): Playlist =>
+  (pl.tracks || []).every((t) => t.partId)
+    ? pl
+    : { ...pl, tracks: (pl.tracks || []).map((t) => (t.partId ? t : { ...t, partId: partIdOf(t) })) };
 
+// Playlists du profil choisi, synchronisées avec la passerelle (#40)
 export function PlaylistProvider({ children }: { children: React.ReactNode }) {
-  const [playlists, setPlaylists] = useState<Playlist[]>(readStoredPlaylists);
+  const [stored, setPlaylists] = useSyncedList<Playlist>("playlists", (p) => p.id);
+  const playlists = useMemo(() => stored.map(withPartIds), [stored]);
   const [modalTracks, setModalTracks] = useState<MediaItem[] | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const toastTimeoutRef = useRef<number | null>(null);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(playlists));
-    } catch (e) {
-      console.warn("Impossible d'enregistrer les playlists dans localStorage :", e);
-    }
-  }, [playlists]);
 
   const showToast = (msg: string) => {
     if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);

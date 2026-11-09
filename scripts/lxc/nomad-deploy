@@ -22,10 +22,11 @@ if [[ ! -f $SRC/server/index.js || ! -f $SRC/server/package-lock.json || ! -f $S
   exit 2
 fi
 
-# Fichiers applicatifs uniquement : dépendances, cache d'images et secrets restent en place
+# Fichiers applicatifs uniquement : dépendances, cache d'images, données des profils (.data) et
+# secrets restent en place
 copy_release() { # <depuis> <vers>
   mkdir -p "$2/server" "$2/client/dist"
-  rsync -a --no-links --exclude node_modules --exclude .cache --exclude '.env*' --exclude test "$1/server/" "$2/server/"
+  rsync -a --no-links --exclude node_modules --exclude .cache --exclude .data --exclude '.env*' --exclude test "$1/server/" "$2/server/"
   rsync -a --no-links --delete "$1/client/dist/" "$2/client/dist/"
 }
 

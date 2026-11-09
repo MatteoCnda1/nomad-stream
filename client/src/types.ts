@@ -37,6 +37,7 @@ export interface MediaItem {
   trackNumber?: number;
   score?: number; // pertinence dans une recherche (0 à 1)
   autoplay?: boolean; // ajouté à la file par la lecture continue
+  unavailable?: boolean; // playlist, « Ma liste » : introuvable dans la bibliothèque (#67)
 }
 
 export interface StreamTrack {

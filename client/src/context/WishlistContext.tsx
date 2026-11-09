@@ -1,11 +1,10 @@
-import React, { createContext, useContext, useEffect, useState } from "react";
+import React, { createContext, useContext } from "react";
 import { MediaItem, MediaDetail } from "../types";
+import { WishlistEntry } from "../profiles";
+import { useSyncedList } from "../hooks/useSyncedList";
 
-// "Ma liste" : collection privée, stockée localement sur l'appareil
-export interface WishlistEntry {
-  item: MediaItem;
-  savedAt: number;
-}
+// "Ma liste" : collection du profil choisi, synchronisée avec la passerelle (#40)
+export type { WishlistEntry };
 
 interface WishlistContextType {
   entries: WishlistEntry[];
@@ -15,35 +14,16 @@ interface WishlistContextType {
   restore: (entry: WishlistEntry) => void;
 }
 
-const STORAGE_KEY = "nomad-wishlist";
 const WishlistContext = createContext<WishlistContextType | null>(null);
 
-function readStored(): WishlistEntry[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    const parsed = raw ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
 export function WishlistProvider({ children }: { children: React.ReactNode }) {
-  const [entries, setEntries] = useState<WishlistEntry[]>(readStored);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
-    } catch {
-      // Stockage plein ou indisponible
-    }
-  }, [entries]);
+  const [entries, setEntries] = useSyncedList<WishlistEntry>("wishlist", (e) => e.item.id);
 
   const isSaved = (id: string) => entries.some((e) => e.item.id === id);
 
   const toggle = (item: MediaItem) => {
     // On ne garde que les métadonnées : les URLs de flux sont redemandées à la lecture
-    const { audioStreams, subtitleStreams, directStreamUrl, hlsStreamUrl, ...plain } = item as MediaDetail;
+    const { audioStreams, subtitleStreams, directStreamUrl, hlsStreamUrl, streamUrl, ...plain } = item as MediaDetail;
     setEntries((prev) =>
       prev.some((e) => e.item.id === item.id)
         ? prev.filter((e) => e.item.id !== item.id)
