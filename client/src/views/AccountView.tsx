@@ -108,15 +108,15 @@ export const AccountView: React.FC<AccountViewProps> = ({ onNavigate }) => {
             )}
           </div>
         </div>
-        {(profile.current || profile.status === "ready") && (
-          <button
-            type="button"
-            onClick={profile.openPicker}
-            className="press self-start sm:self-center h-11 px-5 rounded-full border border-line2 hover:bg-card text-sm font-semibold"
-          >
-            Changer de profil
-          </button>
-        )}
+        <button
+          type="button"
+          onClick={profile.openPicker}
+          className={`press self-start sm:self-center h-11 px-5 rounded-full text-sm font-semibold ${
+            profile.current ? "border border-line2 hover:bg-card" : "bg-accent hover:bg-accent-hover text-white"
+          }`}
+        >
+          {profile.current ? "Changer de profil" : "Choisir un profil"}
+        </button>
         <ThemeToggle className="hidden sm:grid border border-line2 hover:bg-card" />
       </div>
 
