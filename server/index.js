@@ -151,9 +151,16 @@ app.use("/assets", express.static(path.join(clientDist, "assets"), {
   immutable: true,
 }));
 
-// Fichiers PWA racine (manifest, sw, icons) avec cache modéré
+// Fichiers PWA racine (icônes, écrans de démarrage) avec cache modéré. Sauf la page de l'appli,
+// le service worker et le manifest : revérifiés à chaque ouverture (304 s'ils n'ont pas changé).
+// Avec une heure de cache, l'appli installée rouvrait l'ancienne page, donc l'ancienne version,
+// pendant une heure après chaque déploiement.
+const ALWAYS_REVALIDATE = new Set(["index.html", "sw.js", "manifest.json"]);
 app.use(express.static(clientDist, {
   maxAge: "1h",
+  setHeaders: (res, filePath) => {
+    if (ALWAYS_REVALIDATE.has(path.basename(filePath))) res.setHeader("Cache-Control", "no-cache");
+  },
 }));
 
 app.get("*", (req, res) => {
@@ -161,7 +168,8 @@ app.get("*", (req, res) => {
     return res.status(404).json({ error: "API route not found" });
   }
   const indexPath = path.join(clientDist, "index.html");
-  res.sendFile(indexPath, (err) => {
+  res.setHeader("Cache-Control", "no-cache"); // voir ALWAYS_REVALIDATE
+  res.sendFile(indexPath, { cacheControl: false }, (err) => {
     if (err) {
       res.send(`
         <!DOCTYPE html>

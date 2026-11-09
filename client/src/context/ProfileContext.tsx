@@ -61,28 +61,48 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
     cacheProfiles(list);
   };
 
-  // Liste des profils : le choix n'est demandé que si la passerelle répond
-  useEffect(() => {
-    let done = false;
-    const timer = window.setTimeout(() => !done && setStatus((s) => (s === "loading" ? "unreachable" : s)), LOAD_TIMEOUT_MS);
-    fetchProfiles()
-      .then((list) => {
-        keepProfiles(list);
-        setStatus("ready");
-        // Profil supprimé depuis un autre appareil
-        const id = profileIdRef.current;
-        if (id && !list.some((p) => p.id === id)) {
-          setCurrentProfileId(null);
-          setProfileId(null);
-        }
-      })
-      .catch(() => setStatus("unreachable"))
-      .finally(() => {
-        done = true;
-        window.clearTimeout(timer);
-      });
-    return () => window.clearTimeout(timer);
+  // Liste des profils : le choix n'est demandé que si la passerelle répond. Sans réponse à
+  // l'ouverture (réseau lent, Tailscale pas encore connecté), l'appli s'ouvre quand même et la
+  // liste est redemandée au retour sur l'appli et au retour du réseau : l'écran de choix
+  // apparaît alors (sinon il ne restait aucun moyen de créer son profil sans relancer l'appli).
+  const statusRef = useRef(status);
+  statusRef.current = status;
+  const loadingProfiles = useRef(false);
+  const loadProfiles = useCallback(async () => {
+    if (loadingProfiles.current) return;
+    loadingProfiles.current = true;
+    const timer = window.setTimeout(() => setStatus((s) => (s === "loading" ? "unreachable" : s)), LOAD_TIMEOUT_MS);
+    try {
+      const list = await fetchProfiles();
+      keepProfiles(list);
+      setStatus("ready");
+      // Profil supprimé depuis un autre appareil
+      const id = profileIdRef.current;
+      if (id && !list.some((p) => p.id === id)) {
+        setCurrentProfileId(null);
+        setProfileId(null);
+      }
+    } catch {
+      setStatus((s) => (s === "ready" ? s : "unreachable"));
+    } finally {
+      window.clearTimeout(timer);
+      loadingProfiles.current = false;
+    }
   }, []);
+
+  useEffect(() => {
+    void loadProfiles();
+    const retry = () => statusRef.current !== "ready" && void loadProfiles();
+    const onVisible = () => document.visibilityState === "visible" && retry();
+    const interval = window.setInterval(retry, 15000);
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("online", retry);
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("online", retry);
+    };
+  }, [loadProfiles]);
 
   useEffect(() => subscribeQueue(() => setPending(!!profileIdRef.current && pendingFor(profileIdRef.current))), []);
   useEffect(() => setPending(!!profileId && pendingFor(profileId)), [profileId]);
@@ -167,7 +187,10 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
         remote,
         pending,
         pickerOpen,
-        openPicker: () => setPickerOpen(true),
+        openPicker: () => {
+          setPickerOpen(true);
+          void loadProfiles();
+        },
         closePicker: () => setPickerOpen(false),
         select,
         create,
