@@ -9,6 +9,8 @@ export interface Profile {
   name: string;
   color: string;
   createdAt: number;
+  plex?: boolean;
+  plexLinked?: boolean; // progression du compte Plex (sinon : la sienne, gardée par la passerelle, #39)
 }
 
 export interface WishlistEntry {
@@ -55,8 +57,22 @@ export const currentProfileId = (): string | null => {
   const id = readLocal<string | null>(CURRENT_KEY, null);
   return typeof id === "string" && /^p_[a-f0-9]{12}$/.test(id) ? id : null;
 };
-export const setCurrentProfileId = (id: string | null) =>
-  id ? writeLocal(CURRENT_KEY, id) : localStorage.removeItem(CURRENT_KEY);
+// Le profil part avec chaque requête dans un cookie : la passerelle y lit à qui donner quelle
+// position de reprise (#39), y compris pour les rapports envoyés à la fermeture (sendBeacon)
+const PROFILE_COOKIE = "nomad_profile";
+function setProfileCookie(id: string | null) {
+  document.cookie = id
+    ? `${PROFILE_COOKIE}=${id}; path=/; max-age=31536000; SameSite=Lax`
+    : `${PROFILE_COOKIE}=; path=/; max-age=0; SameSite=Lax`;
+}
+
+export const setCurrentProfileId = (id: string | null) => {
+  setProfileCookie(id);
+  return id ? writeLocal(CURRENT_KEY, id) : localStorage.removeItem(CURRENT_KEY);
+};
+
+// Cookie effacé (navigateur, réglages) : remis d'après le profil gardé sur l'appareil
+if (typeof document !== "undefined") setProfileCookie(currentProfileId());
 export const cachedProfiles = () => readLocal<Profile[]>(PROFILES_KEY, []);
 export const cacheProfiles = (list: Profile[]) => writeLocal(PROFILES_KEY, list);
 
@@ -80,7 +96,7 @@ const json = (method: string, body: unknown): RequestInit => ({ method, body: JS
 
 export const fetchProfiles = () => call<{ profiles: Profile[] }>("/api/profiles").then((r) => r.profiles);
 export const createProfile = (name: string, color: string) => call<Profile>("/api/profiles", json("POST", { name, color }));
-export const updateProfile = (id: string, fields: Partial<Pick<Profile, "name" | "color">>) =>
+export const updateProfile = (id: string, fields: Partial<Pick<Profile, "name" | "color" | "plex">>) =>
   call<Profile>(`/api/profiles/${id}`, json("PATCH", fields));
 export const deleteProfile = (id: string) => call<void>(`/api/profiles/${id}`, { method: "DELETE" });
 export const fetchProfileData = (id: string) => call<ProfileData>(`/api/profiles/${id}/data`);

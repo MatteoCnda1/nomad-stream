@@ -14,6 +14,20 @@ const movie = (id, title) => ({
   Media: [{ container: "mp4", videoCodec: "h264", audioCodec: "aac", Part: [{ id: 10 + id, key: `/library/parts/${10 + id}/file.mp4`, file: `/media/Films/${id}.mp4` }] }],
 });
 
+// Série 300 et ses trois épisodes (progression des profils, #39)
+export const EPISODES = [301, 302, 303].map((id, i) => ({
+  ratingKey: String(id),
+  key: `/library/metadata/${id}`,
+  type: "episode",
+  title: `Épisode ${i + 1}`,
+  grandparentTitle: "Série",
+  grandparentRatingKey: "300",
+  parentIndex: 1,
+  index: i + 1,
+  duration: 1_200_000,
+  Media: [{ container: "mp4", Part: [{ id: id + 10, key: `/library/parts/${id + 10}/file.mp4` }] }],
+}));
+
 // Bibliothèque musicale : artistes (type 8), albums (9) et titres (10)
 const artist = (id, title, genres = [], similar = []) => ({
   ratingKey: String(id),
@@ -113,6 +127,11 @@ function respond(url, res) {
       ],
     });
   }
+  // « En cours » du compte Plex : le film 1, entamé
+  if (p === "/library/onDeck") return json({ Metadata: [{ ...movie(1, "Alpha"), viewOffset: 600_000 }] });
+  if (p === "/library/metadata/300/allLeaves") return json({ Metadata: EPISODES });
+  const episode = EPISODES.find((e) => p === `/library/metadata/${e.ratingKey}`);
+  if (episode) return json({ Metadata: [episode] });
   if (/^\/library\/metadata\/\d+$/.test(p)) {
     const id = p.split("/")[3];
     const music = Object.values(MUSIC).flat().find((m) => m.ratingKey === id);

@@ -8,7 +8,7 @@ import { partMissing, preferExistingMedia } from "../availability.js";
 // Sans `availability` (tests, passerelle sans accès aux fichiers) : rien n'est masqué
 const NO_FILTER = { filter: async (items) => items, hiddenMovieCount: async () => 0 };
 
-export function catalogRoutes({ plex, cache, availability = NO_FILTER }) {
+export function catalogRoutes({ plex, cache, availability = NO_FILTER, progress = null }) {
   const { plexFetch, plexUrl } = plex;
   const router = express.Router();
 
@@ -66,8 +66,17 @@ export function catalogRoutes({ plex, cache, availability = NO_FILTER }) {
 
   // 2. Hubs d'accueil (Cache 30s)
   router.get("/api/hubs", async (req, res) => {
+    // Profil à progression propre (#39) : son « Continuer la lecture » à la place de celui de Plex
+    const send = async (result) => {
+      if (!req.nomadProfile?.private || !progress) return res.json(result);
+      const onDeck = await progress.onDeck(req.nomadProfile.id).catch((e) => {
+        console.warn("Continuer la lecture du profil :", e.message);
+        return [];
+      });
+      res.json({ ...result, onDeck });
+    };
     const cached = cache.get("api_hubs");
-    if (cached) return res.json(cached);
+    if (cached) return send(cached);
 
     try {
       const [onDeckRes, moviesRes, showsRes, musicRes] = await Promise.allSettled([
@@ -89,7 +98,7 @@ export function catalogRoutes({ plex, cache, availability = NO_FILTER }) {
         recentMusic: items(musicRes),
       };
       cache.set("api_hubs", result, 30);
-      res.json(result);
+      await send(result);
     } catch (error) {
       res.status(500).json({ error: error.message });
     }
@@ -270,8 +279,14 @@ export function catalogRoutes({ plex, cache, availability = NO_FILTER }) {
   // 11. Reporting Timeline (Scrobble / Reprise de lecture synchronisée avec Plex)
   router.post("/api/timeline", async (req, res) => {
     try {
-      const { ratingKey, key, state, time, duration, client } = req.body;
+      const { ratingKey, key, state, time, duration, client, type } = req.body;
       if (!isNumericId(String(ratingKey))) return res.status(400).json({ error: "ratingKey invalide" });
+      // Profil à progression propre (#39) : gardée par la passerelle, Plex n'en sait rien. La
+      // musique n'a pas de position de reprise : rien à garder.
+      if (req.nomadProfile?.private && progress) {
+        if (type !== "track") await progress.record(req.nomadProfile.id, { ratingKey: String(ratingKey), state, time, duration });
+        return res.json({ success: true, profile: true });
+      }
       // state: 'playing', 'paused', 'stopped'
       const url = plexUrl("/:/timeline", {
         ratingKey: String(ratingKey),

@@ -19,7 +19,7 @@ export const ProfileAvatar: React.FC<{ profile: Pick<Profile, "name" | "color">;
   </span>
 );
 
-type Editing = { id: string | null; name: string; color: string }; // id null : nouveau profil
+type Editing = { id: string | null; name: string; color: string; plex?: boolean }; // id null : nouveau profil
 
 // Écran « Qui écoute ? » : au premier lancement, et depuis Compte › Changer de profil
 export const ProfilePicker: React.FC = () => {
@@ -51,7 +51,12 @@ export const ProfilePicker: React.FC = () => {
     if (!editing || !editing.name.trim()) return;
     run(async () => {
       if (editing.id) {
-        await update(editing.id, { name: editing.name.trim(), color: editing.color });
+        const was = profiles.find((p) => p.id === editing.id)?.plexLinked;
+        await update(editing.id, {
+          name: editing.name.trim(),
+          color: editing.color,
+          ...(editing.plex !== undefined && editing.plex !== was && { plex: editing.plex }),
+        });
         setEditing(null);
       } else {
         const p = await create(editing.name.trim(), editing.color);
@@ -120,6 +125,23 @@ export const ProfilePicker: React.FC = () => {
                 </button>
               ))}
             </div>
+            {editing.id && (
+              <label className="w-full flex items-start gap-3 p-3.5 rounded-2xl bg-card cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={!!editing.plex}
+                  onChange={(e) => setEditing({ ...editing, plex: e.target.checked })}
+                  className="mt-0.5 w-5 h-5 accent-[rgb(var(--accent))] flex-shrink-0"
+                />
+                <span className="text-left">
+                  <span className="block text-[15px] font-medium">Progression partagée avec Plex</span>
+                  <span className="block mt-0.5 text-[13px] text-muted">
+                    « Reprendre » et « Continuer la lecture » suivent le compte Plex (applis Plex de la TV comprises).
+                    Un seul profil à la fois ; les autres ont leur propre progression.
+                  </span>
+                </span>
+              </label>
+            )}
             {error && <p className="text-sm text-accent-text text-center">{error}</p>}
             <div className="flex gap-2.5">
               {profiles.length > 0 && (
@@ -149,7 +171,9 @@ export const ProfilePicker: React.FC = () => {
                   <button
                     type="button"
                     onClick={() =>
-                      managing ? setEditing({ id: p.id, name: p.name, color: p.color }) : select(p.id)
+                      managing
+                        ? setEditing({ id: p.id, name: p.name, color: p.color, plex: !!p.plexLinked })
+                        : select(p.id)
                     }
                     className="press group flex flex-col items-center gap-2.5 w-[104px] sm:w-[120px]"
                     aria-label={managing ? `Modifier ${p.name}` : `Choisir ${p.name}`}

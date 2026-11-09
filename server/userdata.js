@@ -98,6 +98,11 @@ export function cleanProfileFields(raw, { partial = false } = {}) {
     if (!name) return { error: "Nom de profil requis" };
     out.name = name;
   }
+  // Profil dont la progression est celle de Plex (#39)
+  if (raw?.plex !== undefined) {
+    if (typeof raw.plex !== "boolean") return { error: "Valeur invalide pour plex" };
+    out.plex = raw.plex;
+  }
   if (raw?.color !== undefined) {
     if (typeof raw.color !== "string" || !/^#[0-9a-f]{6}$/i.test(raw.color)) return { error: "Couleur invalide" };
     out.color = raw.color.toLowerCase();
@@ -209,11 +214,29 @@ export function repairData(doc, index) {
   return { doc: { playlists, wishlist }, changed, repaired };
 }
 
+// Profil lié à Plex (#39) : sa progression est celle du compte Plex (les applis Plex de la TV
+// la voient), comme avant les profils. Par défaut le premier profil créé ; un seul à la fois.
+// Les autres ont leur propre progression, gardée par la passerelle.
+export function isPlexLinked(profile, list) {
+  if (!profile) return false;
+  if (profile.plex === true) return true;
+  if (list.some((p) => p.plex === true)) return false;
+  return list[0]?.id === profile.id && profile.plex !== false;
+}
+
+export const withLinks = (list) => list.map((p) => ({ ...p, plexLinked: isPlexLinked(p, list) }));
+
+const MAX_PROGRESS = 3000;
+const PROGRESS_SAVE_MS = 10000;
+
 // --- Stockage ---
 
 export function createUserData({ dir }) {
   const profilesFile = path.join(dir, "profiles.json");
   const docFile = (id) => path.join(dir, "profiles", `${id}.json`);
+  const progressFile = (id) => path.join(dir, "profiles", `${id}.progress.json`);
+  const progressDocs = new Map(); // id -> Promise<{ [ratingKey]: entrée }>
+  const progressTimers = new Map();
   let profiles = null;
   const docs = new Map(); // id -> Promise<document>
   let writing = Promise.resolve();
@@ -297,8 +320,11 @@ export function createUserData({ dir }) {
     },
 
     async updateProfile(id, fields) {
-      const profile = (await loadProfiles()).find((p) => p.id === id);
+      const list = await loadProfiles();
+      const profile = list.find((p) => p.id === id);
       if (!profile) return null;
+      // Un seul profil lié à Plex
+      if (fields.plex === true) for (const p of list) if (p.id !== id) p.plex = false;
       Object.assign(profile, fields);
       await saveProfiles();
       return profile;
@@ -315,10 +341,51 @@ export function createUserData({ dir }) {
       await writing.catch(() => {});
       const deleted = path.join(dir, "deleted");
       await fs.mkdir(deleted, { recursive: true });
-      await fs.rename(docFile(id), path.join(deleted, `${id}-${Date.now()}.json`)).catch((e) => {
-        if (e.code !== "ENOENT") throw e;
-      });
+      const stamp = Date.now();
+      clearTimeout(progressTimers.get(id));
+      progressDocs.delete(id);
+      for (const [file, suffix] of [[docFile(id), ""], [progressFile(id), ".progress"]]) {
+        await fs.rename(file, path.join(deleted, `${id}-${stamp}${suffix}.json`)).catch((e) => {
+          if (e.code !== "ENOENT") throw e;
+        });
+      }
       return true;
+    },
+
+    // Progression d'un profil non lié à Plex : { ratingKey: { offset, duration, updatedAt,
+    // watched?, upNext? } } (millisecondes). Fichier à part : il change toutes les 10 s pendant
+    // une lecture, les playlists n'ont pas à être réécrites pour autant.
+    getProgress(id) {
+      if (!progressDocs.has(id)) {
+        const p = readJson(progressFile(id), {}).then((d) =>
+          d && typeof d.entries === "object" && !Array.isArray(d.entries) ? d.entries : {},
+        );
+        p.catch(() => progressDocs.delete(id));
+        progressDocs.set(id, p);
+      }
+      return progressDocs.get(id);
+    },
+
+    // Écritures regroupées (au plus une toutes les 10 s), immédiate avec `now`
+    async setProgress(id, ratingKey, entry, { now = false } = {}) {
+      const entries = await this.getProgress(id);
+      entries[ratingKey] = entry;
+      const keys = Object.keys(entries);
+      if (keys.length > MAX_PROGRESS) {
+        keys.sort((a, b) => entries[a].updatedAt - entries[b].updatedAt);
+        for (const k of keys.slice(0, keys.length - MAX_PROGRESS)) delete entries[k];
+      }
+      const save = () => {
+        progressTimers.delete(id);
+        return writeJson(progressFile(id), { version: 1, entries }).catch((e) =>
+          console.error("Progression du profil :", e.message),
+        );
+      };
+      if (now) {
+        clearTimeout(progressTimers.get(id));
+        return save();
+      }
+      if (!progressTimers.has(id)) progressTimers.set(id, setTimeout(save, PROGRESS_SAVE_MS).unref?.() ?? null);
     },
 
     getData: loadDoc,

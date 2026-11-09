@@ -96,6 +96,8 @@ export const AccountView: React.FC<AccountViewProps> = ({ onNavigate }) => {
                 <span role="status">
                   {profile.pending ? "Changements en attente d'envoi" : "Retrouvé sur tous vos appareils"}
                 </span>
+                <span aria-hidden="true">·</span>
+                <span>{profile.current.plexLinked ? "Progression partagée avec Plex" : "Progression propre à ce profil"}</span>
               </>
             ) : (
               <span>
