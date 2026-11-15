@@ -107,6 +107,13 @@ export async function fetchMetadata(id: string): Promise<MediaDetail> {
   return cachedFetch(`${BASE_URL}/api/metadata/${id}`, 300000);
 }
 
+// Épisode suivant d'un épisode, proposé à la fin de la lecture (null : dernier de la série)
+export async function fetchNextEpisode(id: string): Promise<MediaItem | null> {
+  const res = await fetch(`${BASE_URL}/api/metadata/${id}/next`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return (await res.json()).next ?? null;
+}
+
 // Préchargement (au toucher d'une vignette, à l'ouverture d'une fiche) : le lancement devient instantané
 export function prefetchMetadata(id: string) {
   fetchMetadata(id).catch(() => {});
@@ -199,6 +206,9 @@ export type PlaybackSummary = {
   droppedFrames: number;
   totalFrames: number;
   error: string | null;
+  recoveries: number; // lectures figées rattrapées par le lecteur
+  endReason: "closed" | "pagehide" | "error";
+  events: string[]; // derniers événements du lecteur (attente, erreur, relance, AirPlay…)
 };
 
 export function beaconPlaybackLog(summary: PlaybackSummary) {

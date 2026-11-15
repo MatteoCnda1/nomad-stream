@@ -154,3 +154,23 @@ export function saveQualityPref(pref: QualityPref) {
     // Ignore
   }
 }
+
+// Épisode suivant lancé tout seul à la fin d'un épisode, après un compte à rebours (réglage gardé
+// sur l'appareil, activé par défaut)
+const AUTONEXT_KEY = "nomad-autonext";
+
+export function loadAutoNext(): boolean {
+  try {
+    return localStorage.getItem(AUTONEXT_KEY) !== "0";
+  } catch {
+    return true;
+  }
+}
+
+export function saveAutoNext(on: boolean) {
+  try {
+    localStorage.setItem(AUTONEXT_KEY, on ? "1" : "0");
+  } catch {
+    // Gardé jusqu'à la fermeture
+  }
+}

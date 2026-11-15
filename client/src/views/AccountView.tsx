@@ -13,6 +13,7 @@ import { MAX_CROSSFADE, isIOS, setCrossfadeSeconds, useCrossfade } from "../cros
 import { useProfiles } from "../context/ProfileContext";
 import { ProfileAvatar } from "../components/ProfilePicker";
 import { usePlaylist } from "../context/PlaylistContext";
+import { loadAutoNext, saveAutoNext } from "../streaming";
 
 interface AccountViewProps {
   onNavigate: (tab: string) => void;
@@ -58,6 +59,7 @@ export const AccountView: React.FC<AccountViewProps> = ({ onNavigate }) => {
   const profile = useProfiles();
   const { playlists } = usePlaylist();
   const [cacheCleared, setCacheCleared] = useState(false);
+  const [autoNext, setAutoNext] = useState(loadAutoNext);
   // Musique préchargée pendant l'écoute (#56) : place occupée sur cet appareil
   const [prefetched, setPrefetched] = useState<{ tracks: number; bytes: number } | null>(null);
   useEffect(() => {
@@ -310,6 +312,27 @@ export const AccountView: React.FC<AccountViewProps> = ({ onNavigate }) => {
           <Card labelledBy="play-h" className="col-span-12 xl:col-span-5">
             <h2 id="play-h" className="text-lg font-semibold">Lecture</h2>
             <div className="mt-2">
+              <Row
+                title="Épisode suivant automatique"
+                hint="À la fin d'un épisode, le suivant démarre après 10 secondes (on peut annuler)"
+              >
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={autoNext}
+                  aria-label="Épisode suivant automatique"
+                  onClick={() => {
+                    saveAutoNext(!autoNext);
+                    setAutoNext(!autoNext);
+                  }}
+                  className={`press relative w-[52px] h-8 rounded-full transition-colors flex-shrink-0 ${autoNext ? "bg-accent" : "bg-line2"}`}
+                >
+                  <span
+                    aria-hidden="true"
+                    className={`absolute top-1 left-1 w-6 h-6 rounded-full bg-white shadow transition-transform ${autoNext ? "translate-x-5" : ""}`}
+                  />
+                </button>
+              </Row>
               <Row
                 title="Fondu enchaîné"
                 hint="Le titre suivant monte pendant que la fin du titre en cours baisse. Jamais entre deux titres qui se suivent sur un album."

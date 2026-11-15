@@ -119,6 +119,24 @@ export function createPlex({ url, token, timeoutMs = 15000 }) {
   return { url: baseUrl, token, timeoutMs, plexUrl, plexFetch };
 }
 
+// Épisodes qui suivent un épisode dans sa série, dans l'ordre de Plex (saisons puis épisodes).
+// Les épisodes spéciaux (saison 0) ne viennent pas à la suite d'un épisode normal.
+export async function episodesAfter(plexFetch, ratingKey) {
+  const meta = (await plexFetch(`/library/metadata/${ratingKey}`)).MediaContainer?.Metadata?.[0];
+  if (meta?.type !== "episode" || !meta.grandparentRatingKey) return [];
+  const leaves = (await plexFetch(`/library/metadata/${meta.grandparentRatingKey}/allLeaves`)).MediaContainer?.Metadata || [];
+  const i = leaves.findIndex((e) => String(e.ratingKey) === String(ratingKey));
+  if (i < 0) return [];
+  return leaves.slice(i + 1).filter((e) => meta.parentIndex === 0 || e.parentIndex !== 0);
+}
+
+// Début du générique de fin (ms), quand Plex l'a détecté (marqueurs, Plex Pass) ; sinon null
+export function creditsStart(item) {
+  const credits = (item?.Marker || []).filter((m) => m.type === "credits" && Number.isFinite(m.startTimeOffset));
+  const marker = credits.find((m) => m.final) || credits.at(-1);
+  return marker ? marker.startTimeOffset : null;
+}
+
 // Lien de flux audio direct d'une piste (MediaItem mis en forme)
 export const audioStreamUrl = (partKey) => `/api/stream/audio?key=${encodeURIComponent(partKey)}`;
 

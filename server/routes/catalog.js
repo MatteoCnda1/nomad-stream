@@ -1,7 +1,7 @@
 // Catalogue : statut, accueil, listes (films, séries, artistes), fiches détaillées et rapport
 // de progression (scrobble). La recherche est dans routes/search.js.
 import express from "express";
-import { SECTIONS, PLEX_WEB_PROFILE, plexClientId, fetchPlex, formatMediaItem, formatListItem, formatTrack } from "../plex.js";
+import { SECTIONS, PLEX_WEB_PROFILE, plexClientId, fetchPlex, formatMediaItem, formatListItem, formatTrack, episodesAfter, creditsStart } from "../plex.js";
 import { isNumericId } from "../validate.js";
 import { partMissing, preferExistingMedia } from "../availability.js";
 
@@ -218,7 +218,8 @@ export function catalogRoutes({ plex, cache, availability = NO_FILTER, progress 
     try {
       // checkFiles : Plex vérifie que le fichier est encore sur le disque (une fiche peut survivre
       // à un fichier perdu ou déplacé tant que la bibliothèque n'a pas été réanalysée)
-      const data = await plexFetch(`/library/metadata/${id}?checkFiles=1`);
+      // includeMarkers : début du générique de fin, pour proposer l'épisode suivant à ce moment-là
+      const data = await plexFetch(`/library/metadata/${id}?checkFiles=1&includeMarkers=1`);
       const item = data.MediaContainer?.Metadata?.[0];
       if (!item) return res.status(404).json({ error: "Item not found" });
       const mediaIndex = preferExistingMedia(item);
@@ -264,6 +265,7 @@ export function catalogRoutes({ plex, cache, availability = NO_FILTER, progress 
         // Fichier absent du disque : la lecture et le téléchargement sont impossibles
         missing: partMissing(part),
         mediaIndex,
+        creditsStart: creditsStart(item),
         audioStreams,
         subtitleStreams,
         directStreamUrl,
@@ -271,6 +273,20 @@ export function catalogRoutes({ plex, cache, availability = NO_FILTER, progress 
       };
       cache.set(cacheKey, result, 300);
       res.json(result);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // 10 bis. Épisode suivant d'un épisode (proposé à la fin de la lecture), en sautant ceux dont le
+  // fichier a disparu ; { next: null } pour le dernier épisode, un film ou une musique
+  router.get("/api/metadata/:id/next", async (req, res) => {
+    const id = req.params.id;
+    if (!isNumericId(id)) return res.status(400).json({ error: "id invalide" });
+    try {
+      const following = (await episodesAfter(plexFetch, id)).slice(0, 10).map(formatMediaItem);
+      const [next] = await availability.filter(following);
+      res.json({ next: next ?? null });
     } catch (error) {
       res.status(500).json({ error: error.message });
     }

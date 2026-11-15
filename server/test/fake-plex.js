@@ -25,7 +25,9 @@ export const EPISODES = [301, 302, 303].map((id, i) => ({
   parentIndex: 1,
   index: i + 1,
   duration: 1_200_000,
-  Media: [{ container: "mp4", Part: [{ id: id + 10, key: `/library/parts/${id + 10}/file.mp4` }] }],
+  Media: [{ container: "mp4", Part: [{ id: id + 10, key: `/library/parts/${id + 10}/file.mp4`, file: `/media/Films/${id}.mp4` }] }],
+  // Épisode 2 : générique de fin détecté par Plex (marqueurs, Plex Pass)
+  ...(id === 302 ? { Marker: [{ type: "intro", startTimeOffset: 0, endTimeOffset: 60_000 }, { type: "credits", startTimeOffset: 1_150_000, endTimeOffset: 1_200_000, final: true }] } : {}),
 }));
 
 // Bibliothèque musicale : artistes (type 8), albums (9) et titres (10)

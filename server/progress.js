@@ -5,7 +5,7 @@
 // les autres, la passerelle tient la sienne et la met à la place de celle de Plex dans toutes les
 // réponses (fiches, listes, recherche), et construit leur « Continuer la lecture » (en cours et
 // épisode suivant d'une série terminée). Le profil vient du cookie nomad_profile, posé par l'appli.
-import { formatMediaItem } from "./plex.js";
+import { episodesAfter, formatMediaItem } from "./plex.js";
 import { isPlexLinked, isProfileId } from "./userdata.js";
 
 export const PROFILE_COOKIE = "nomad_profile";
@@ -80,11 +80,7 @@ export function createProgress({ userData, plexFetch, availability }) {
 
   // Épisode suivant d'une série, ajouté au « Continuer la lecture » quand un épisode est fini
   async function queueNextEpisode(profileId, ratingKey) {
-    const meta = (await plexFetch(`/library/metadata/${ratingKey}`)).MediaContainer?.Metadata?.[0];
-    if (meta?.type !== "episode" || !meta.grandparentRatingKey) return;
-    const leaves = (await plexFetch(`/library/metadata/${meta.grandparentRatingKey}/allLeaves`)).MediaContainer?.Metadata || [];
-    const i = leaves.findIndex((e) => String(e.ratingKey) === String(ratingKey));
-    const next = i >= 0 ? leaves[i + 1] : null;
+    const next = (await episodesAfter(plexFetch, ratingKey))[0];
     if (!next) return;
     const entries = await userData.getProgress(profileId);
     const current = entries[next.ratingKey];

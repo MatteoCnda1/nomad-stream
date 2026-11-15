@@ -37,6 +37,20 @@ describe("journal des lectures (unitaire)", () => {
     assert.equal(sanitizePlayback({ ...sample, title: "t".repeat(500) }).title.length, 160);
   });
 
+  test("événements du lecteur et fin de séance : bornés et filtrés", () => {
+    const events = [...Array(200).keys()].map((i) => (i === 199 ? "y".repeat(500) : `${i}s attente`));
+    const e = sanitizePlayback({ ...sample, events: [...events, 42, null, ""], recoveries: 2, endReason: "pagehide" });
+    assert.equal(e.events.length, 77); // 80 derniers, dont 3 non textuels écartés
+    assert.equal(e.events[0], "123s attente");
+    assert.equal(e.events.at(-1).length, 160);
+    assert.equal(e.recoveries, 2);
+    assert.equal(e.endReason, "pagehide");
+    const bad = sanitizePlayback({ ...sample, events: "pas une liste", endReason: "<b>" });
+    assert.deepEqual(bad.events, []);
+    assert.equal(bad.endReason, null);
+    assert.match(summarizePlayback(e), /2 lecture\(s\) figée\(s\) rattrapée\(s\)/);
+  });
+
   test("identifiant de média obligatoire et numérique", () => {
     for (const id of [undefined, 12, "abc", "1/../2"]) assert.equal(sanitizePlayback({ ...sample, id }), null);
   });
