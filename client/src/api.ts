@@ -199,6 +199,9 @@ export type PlaybackSummary = {
   droppedFrames: number;
   totalFrames: number;
   error: string | null;
+  recoveries: number; // lectures figées rattrapées par le lecteur
+  endReason: "closed" | "pagehide" | "error";
+  events: string[]; // derniers événements du lecteur (attente, erreur, relance, AirPlay…)
 };
 
 export function beaconPlaybackLog(summary: PlaybackSummary) {

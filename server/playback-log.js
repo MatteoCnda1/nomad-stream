@@ -7,6 +7,8 @@ import path from "path";
 const MODES = new Set(["direct", "hls", "abr", "local"]);
 const QUALITIES = new Set(["original", "1080p", "720p", "480p", "360p"]);
 const CAUSES = new Set(["network", "transcoder"]);
+const END_REASONS = new Set(["closed", "pagehide", "error"]);
+const MAX_EVENTS = 80;
 const MAX_BYTES = 5 * 1024 * 1024;
 
 const int = (v, max) => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? Math.min(Math.round(v), max) : null);
@@ -31,6 +33,14 @@ export function sanitizePlayback(body) {
     droppedFrames: int(body.droppedFrames, 1e9) ?? 0,
     totalFrames: int(body.totalFrames, 1e9) ?? 0,
     error: str(body.error, 200),
+    // Lectures figées rattrapées par le lecteur (sans que l'utilisateur ait à rouvrir)
+    recoveries: int(body.recoveries, 1_000) ?? 0,
+    endReason: END_REASONS.has(body.endReason) ? body.endReason : null,
+    // Derniers événements du lecteur (attente, erreur, relance, AirPlay…), pour comprendre après
+    // coup une lecture qui s'est mal passée
+    events: Array.isArray(body.events)
+      ? body.events.slice(-MAX_EVENTS).map((e) => str(e, 160)).filter(Boolean)
+      : [],
   };
 }
 
@@ -45,6 +55,8 @@ export function summarizePlayback(e) {
     `${Math.round(e.watchedS / 60)} min vues`,
   ];
   if (e.qualitySwitches) parts.push(`${e.qualitySwitches} changement(s) de qualité`);
+  if (e.recoveries) parts.push(`${e.recoveries} lecture(s) figée(s) rattrapée(s)`);
+  if (e.restarts) parts.push(`${e.restarts} relance(s) du flux`);
   if (e.error) parts.push(`erreur : ${e.error}`);
   return `▶ ${e.title ?? e.id} · ${parts.join(" · ")}`;
 }

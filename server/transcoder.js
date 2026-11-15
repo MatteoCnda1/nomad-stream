@@ -20,6 +20,8 @@ const SEGMENT_WAIT_MS = 45000;
 const IDLE_KILL_MS = 5 * 60 * 1000; // plus aucune requête depuis 5 min : ffmpeg est arrêté
 const JOB_TTL_MS = 45 * 60 * 1000; // segments conservés 45 min (reprise, retour en arrière)
 const MAX_RUNNING = 3;
+const BUSY_MS = 60 * 1000;
+const SLOW_SEGMENT_MS = 8000; // attente d'un segment au-delà de laquelle on le note dans le journal
 const AUDIO_KBPS = 128;
 
 // Paliers produits simultanément (bornés par la taille de la source)
@@ -213,13 +215,25 @@ export function createTranscoder({ device, cacheDir, driver = "iHD", mediaMap = 
     return n;
   }
 
-  function launch(job, startSeg) {
+  // Conversion qui sert une lecture en ce moment (segment demandé il y a peu, pas en pause)
+  const isBusy = (j, now) => !j.paused && now - j.lastAccess < BUSY_MS;
+
+  function launch(job, startSeg, reason) {
     stopProcess(job);
-    // Trop de conversions simultanées : on arrête la plus ancienne inactive
+    // Trop de conversions simultanées : on arrête d'abord une conversion abandonnée ou en pause
+    // (ses segments déjà prêts restent servis, elle repart si on la redemande), et seulement en
+    // dernier recours celle d'une lecture en cours
     if (runningCount() >= MAX_RUNNING) {
-      const oldest = [...jobs.values()].filter((j) => j.proc && j !== job).sort((a, b) => a.lastAccess - b.lastAccess)[0];
-      if (oldest) stopProcess(oldest);
+      const now = Date.now();
+      const victim = [...jobs.values()]
+        .filter((j) => j.proc && j !== job)
+        .sort((a, b) => isBusy(a, now) - isBusy(b, now) || a.lastAccess - b.lastAccess)[0];
+      if (victim) {
+        console.warn(`[tx ${victim.id}] conversion arrêtée pour faire de la place${isBusy(victim, now) ? " (lecture en cours !)" : ""}`);
+        stopProcess(victim);
+      }
     }
+    if (reason) console.log(`[tx ${job.id}] conversion relancée au segment ${startSeg} (${reason})`);
     job.variants.forEach((_, i) => fs.mkdirSync(path.join(job.dir, `v${i}`), { recursive: true }));
     const proc = spawn("ffmpeg", buildArgs(job, startSeg), {
       env: { ...process.env, LIBVA_DRIVER_NAME: driver },
@@ -297,6 +311,9 @@ export function createTranscoder({ device, cacheDir, driver = "iHD", mediaMap = 
       lastRequest: 0,
       lastAccess: Date.now(),
       launches: [],
+      // Point de reprise annoncé dans les playlists (EXT-X-START) : le lecteur natif (Safari)
+      // démarre de lui-même au bon endroit, sans dépendre d'un saut fait après le chargement
+      startSeconds: Math.min(Math.max(0, Number(startSeconds) || 0), Math.max(0, duration - SEG)),
     };
     jobs.set(id, job);
     // Démarrer tout de suite au point de lecture : le premier segment est prêt plus tôt
@@ -306,13 +323,15 @@ export function createTranscoder({ device, cacheDir, driver = "iHD", mediaMap = 
     return job;
   }
 
+  const startTag = (job) => (job.startSeconds > 0 ? [`#EXT-X-START:TIME-OFFSET=${job.startSeconds.toFixed(3)},PRECISE=YES`] : []);
+
   function masterPlaylist(job, preferredIndex = 0) {
     // Safari démarre sur la première variante annoncée : on met en tête celle qui convient au débit connu
     const order = job.variants.map((v, i) => i);
     const first = Math.min(Math.max(0, preferredIndex), order.length - 1);
     order.splice(first, 1);
     order.unshift(first);
-    const lines = ["#EXTM3U", "#EXT-X-VERSION:3", "#EXT-X-INDEPENDENT-SEGMENTS"];
+    const lines = ["#EXTM3U", "#EXT-X-VERSION:3", "#EXT-X-INDEPENDENT-SEGMENTS", ...startTag(job)];
     for (const i of order) {
       const v = job.variants[i];
       const avg = (v.kbps + AUDIO_KBPS) * 1000;
@@ -327,7 +346,7 @@ export function createTranscoder({ device, cacheDir, driver = "iHD", mediaMap = 
 
   function variantPlaylist(job) {
     const lines = ["#EXTM3U", "#EXT-X-VERSION:3", "#EXT-X-PLAYLIST-TYPE:VOD", `#EXT-X-TARGETDURATION:${SEG + 1}`,
-      "#EXT-X-MEDIA-SEQUENCE:0", "#EXT-X-INDEPENDENT-SEGMENTS"];
+      "#EXT-X-MEDIA-SEQUENCE:0", "#EXT-X-INDEPENDENT-SEGMENTS", ...startTag(job)];
     for (let n = 0; n < job.segCount; n++) {
       const d = n === job.segCount - 1 ? job.duration - n * SEG : SEG;
       lines.push(`#EXTINF:${d.toFixed(3)},`, `${n}.ts`);
@@ -354,19 +373,28 @@ export function createTranscoder({ device, cacheDir, driver = "iHD", mediaMap = 
       // Saut dans le film, conversion arrêtée (pause longue) ou plantée : on repart de ce segment.
       // Garde-fou contre les boucles : 6 relances par minute au maximum.
       job.launches = job.launches.filter((t) => Date.now() - t < 60000);
-      if (job.launches.length >= 6) throw Object.assign(new Error(job.error || "Conversion instable"), { status: 503 });
-      launch(job, n);
+      if (job.launches.length >= 6) {
+        console.warn(`[tx ${job.id}] segment ${n} refusé : 6 relances en une minute (${job.error || "conversion instable"})`);
+        throw Object.assign(new Error(job.error || "Conversion instable"), { status: 503 });
+      }
+      const reason = !job.proc ? (job.error ? "après un échec" : "conversion arrêtée") : n < job.procStart ? "retour en arrière" : "saut en avant";
+      launch(job, n, reason);
     } else if (job.paused) {
       job.proc.kill("SIGCONT");
       job.paused = false;
     }
-    const deadline = Date.now() + SEGMENT_WAIT_MS;
+    const t0 = Date.now();
+    const deadline = t0 + SEGMENT_WAIT_MS;
     while (Date.now() < deadline) {
-      if (fs.existsSync(file)) return file;
+      if (fs.existsSync(file)) {
+        if (Date.now() - t0 > SLOW_SEGMENT_MS) console.warn(`[tx ${job.id}] segment v${v}/${n} prêt après ${Math.round((Date.now() - t0) / 1000)} s`);
+        return file;
+      }
       if (!job.proc && (job.error || job.finished)) break;
       await new Promise((r) => setTimeout(r, 100));
     }
     if (fs.existsSync(file)) return file;
+    console.warn(`[tx ${job.id}] segment v${v}/${n} pas prêt : ${job.error || `rien après ${SEGMENT_WAIT_MS / 1000} s`}`);
     throw Object.assign(new Error(job.error || "Segment pas prêt à temps"), { status: job.error ? 502 : 504 });
   }
 

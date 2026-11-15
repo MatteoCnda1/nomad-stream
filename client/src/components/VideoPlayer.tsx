@@ -68,6 +68,26 @@ const LONG_STALL_MS = 6000;
 const STALL_WINDOW_MS = 60000;
 const STALLS_BEFORE_DOWNGRADE = 3;
 
+// Lecture figée : le navigateur attend indéfiniment sans signaler d'erreur (vu sur Safari, iPad et
+// iPhone, qui lisent le HLS eux-mêmes : il fallait fermer puis rouvrir le lecteur). Une lecture qui
+// n'avance plus depuis STUCK_MS (STUCK_START_MS pour la 1re image ou juste après un saut, le temps
+// que le transcodeur reparte) est d'abord relancée en douceur au même endroit ; si elle reste
+// bloquée STUCK_RETRY_MS de plus, un nouveau flux est ouvert à la même position.
+const STUCK_MS = 12000;
+const STUCK_START_MS = 20000;
+const STUCK_RETRY_MS = 10000;
+const MAX_EVENTS = 80;
+
+// Secondes déjà en mémoire devant la position de lecture
+const bufferedAhead = (video: HTMLVideoElement) => {
+  for (let i = 0; i < video.buffered.length; i++) {
+    if (video.buffered.start(i) <= video.currentTime + 0.5 && video.buffered.end(i) >= video.currentTime) {
+      return video.buffered.end(i) - video.currentTime;
+    }
+  }
+  return 0;
+};
+
 const newSessionId = () => "nomad-" + Math.random().toString(36).slice(2, 12);
 
 // Statistiques d'un segment HLS : attente que Plex le prépare, puis transfert réseau
@@ -196,6 +216,30 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ media, localSrc, onClo
   const fragSamplesRef = useRef<FragSample[]>([]);
   const transcoderWarnedRef = useRef(false);
 
+  // Lecture figée : dernière avancée de la lecture, et étape du rattrapage en cours
+  const phaseRef = useRef<Phase>(phase);
+  phaseRef.current = phase;
+  const progressRef = useRef({ time: -1, at: Date.now() });
+  const recoveryRef = useRef({ step: 0, at: 0 });
+  // Reprise demandée au chargement d'une source lue par le navigateur (lecture directe, HLS natif) :
+  // tant qu'elle n'est pas appliquée, la position 0 du début de la source n'écrase pas la position
+  // de reprise (sinon une relance ou un rapport de progression repartait du début)
+  const pendingStartRef = useRef<number | null>(null);
+  // Le flux converti lui-même est en échec (réponse 5xx, vidéo illisible), pas seulement le réseau
+  const conversionFailedRef = useRef(false);
+
+  // Derniers événements du lecteur, envoyés avec le bilan de la séance
+  const openedAtRef = useRef(Date.now());
+  const eventsRef = useRef<string[]>([]);
+  const trace = (kind: string, detail = "") => {
+    const video = videoRef.current;
+    const t = Math.round((Date.now() - openedAtRef.current) / 1000);
+    const state = video
+      ? ` · t=${video.currentTime.toFixed(1)} rs=${video.readyState} ns=${video.networkState} tampon=${bufferedAhead(video).toFixed(0)}s`
+      : "";
+    eventsRef.current = [...eventsRef.current.slice(1 - MAX_EVENTS), `${t}s ${kind}${detail ? ` ${detail}` : ""}${state}`];
+  };
+
   // Statistiques de la séance : panneau « Statistiques » et bilan envoyé au journal du serveur
   const sessionStatsRef = useRef({
     firstLoadAt: 0,
@@ -214,6 +258,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ media, localSrc, onClo
     totalFrames: 0,
     curDropped: 0,
     curTotal: 0,
+    recoveries: 0,
   });
   const loggedRef = useRef(false);
   const [showStats, setShowStats] = useState(false);
@@ -249,6 +294,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ media, localSrc, onClo
   const setActiveMode = (next: Active) => {
     const prev = activeRef.current;
     if (prev && (prev.quality !== next.quality || prev.mode !== next.mode)) sessionStatsRef.current.qualitySwitches++;
+    if (!prev || prev.quality !== next.quality || prev.mode !== next.mode) trace("flux", `${next.mode} ${next.quality}`);
     activeRef.current = next;
     setActive(next);
   };
@@ -260,7 +306,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ media, localSrc, onClo
   };
 
   // Bilan de la séance, une seule fois (fermeture du lecteur ou de l'onglet)
-  const sendPlaybackLog = () => {
+  const sendPlaybackLog = (endReason: "closed" | "pagehide" | "error") => {
     const s = sessionStatsRef.current;
     if (loggedRef.current || !s.firstLoadAt) return;
     loggedRef.current = true;
@@ -281,6 +327,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ media, localSrc, onClo
       droppedFrames: s.droppedFrames + s.curDropped,
       totalFrames: s.totalFrames + s.curTotal,
       error: s.error,
+      recoveries: s.recoveries,
+      endReason,
+      events: eventsRef.current,
     });
   };
 
@@ -316,7 +365,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ media, localSrc, onClo
   };
 
   const seekWhenReady = (video: HTMLVideoElement, time: number) => {
+    pendingStartRef.current = null;
     if (time <= 0) return;
+    pendingStartRef.current = time;
     video.addEventListener("loadedmetadata", () => { video.currentTime = time; }, { once: true });
   };
 
@@ -326,6 +377,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ media, localSrc, onClo
     let mediaRecoveries = 0;
     let lastSave = 0;
     hls.on(Hls.Events.FRAG_LOADED, (_event, data) => {
+      networkRecoveries = 0; // le réseau répond de nouveau : la prochaine coupure aura ses essais
       const { loading, loaded } = data.frag.stats;
       const sample = { ttfbMs: loading.first - loading.start, transferMs: Math.max(1, loading.end - loading.first), bytes: loaded };
       fragSamplesRef.current = [...fragSamplesRef.current.slice(-5), sample];
@@ -341,9 +393,16 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ media, localSrc, onClo
     });
     hls.on(Hls.Events.ERROR, (_event, data) => {
       if (!data.fatal || hlsRef.current !== hls) return;
-      if (data.type === Hls.ErrorTypes.NETWORK_ERROR && networkRecoveries < 1) {
+      const code = data.response?.code ?? 0;
+      trace("erreur hls.js", `${data.details}${code ? ` HTTP ${code}` : ""}`);
+      if (code >= 500) conversionFailedRef.current = true;
+      // Coupure réseau (Tailscale qui change de chemin, 4G qui faiblit) : on reprend le
+      // chargement au même endroit, de plus en plus tard, avant de rouvrir tout le flux
+      if (data.type === Hls.ErrorTypes.NETWORK_ERROR && networkRecoveries < 3) {
         networkRecoveries++;
-        hls.startLoad(positionRef.current);
+        window.setTimeout(() => {
+          if (hlsRef.current === hls) hls.startLoad(videoRef.current?.currentTime || positionRef.current);
+        }, 1000 * networkRecoveries);
         return;
       }
       if (data.type === Hls.ErrorTypes.MEDIA_ERROR && mediaRecoveries < 2) {
@@ -409,6 +468,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ media, localSrc, onClo
     if (!video) return;
     const loadId = ++loadIdRef.current;
     if (!sessionStatsRef.current.firstLoadAt) sessionStatsRef.current.firstLoadAt = Date.now();
+    trace("ouverture du flux", `à ${Math.round(startTime)} s`);
     teardown();
     setPhase("loading");
     setErrorText("");
@@ -417,6 +477,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ media, localSrc, onClo
     fragSamplesRef.current = [];
     sessionExpiredRef.current = false;
     positionRef.current = startTime;
+    pendingStartRef.current = null;
+    progressRef.current = { time: -1, at: Date.now() };
+    recoveryRef.current = { step: 0, at: 0 };
 
     // 0. Version téléchargée : lue depuis l'appareil, sans réseau ni conversion
     if (localSrc) {
@@ -553,9 +616,12 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ media, localSrc, onClo
     restartsRef.current.push(now);
     sessionStatsRef.current.restarts++;
     const cur = activeRef.current;
-    // Flux iGPU qui échoue deux fois de suite : on passe par le transcodeur de Plex
+    trace("relance du flux", `${restartsRef.current.length}/3`);
+    // Flux iGPU dont la conversion elle-même échoue deux fois de suite : on passe par le
+    // transcodeur de Plex. Pas pour une simple coupure réseau : Plex convertit sans l'iGPU, en une
+    // seule qualité, et couperait davantage
     if (cur?.mode === "abr") {
-      startPlayback(positionRef.current, { forcePlex: restartsRef.current.length >= 2 });
+      startPlayback(positionRef.current, { forcePlex: conversionFailedRef.current && restartsRef.current.length >= 2 });
       return;
     }
     // Vidéo HEVC/AV1 recopiée en "originale" que l'appareil ne sait pas décoder : on la convertit
@@ -593,6 +659,53 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ media, localSrc, onClo
     startPlayback(positionRef.current, { quality: next });
   };
 
+  // Lecture qui n'avance plus alors qu'elle n'est pas en pause (voir STUCK_MS)
+  const watchStuck = () => {
+    const video = videoRef.current;
+    if (!video || localSrc) return;
+    const now = Date.now();
+    const t = video.currentTime;
+    const progress = progressRef.current;
+    const recovery = recoveryRef.current;
+    // En pause, terminée (ou à quelques secondes de la fin : un dernier segment un peu plus court
+    // qu'annoncé laisse le lecteur « en attente »), en erreur ou en arrière-plan : rien à surveiller
+    const total = isFinite(video.duration) && video.duration > 0 ? video.duration : media.duration / 1000;
+    const atEnd = video.ended || (total > 0 && total - t < 5);
+    if (video.paused || atEnd || phaseRef.current === "error" || document.visibilityState === "hidden") {
+      progressRef.current = { time: t, at: now };
+      return;
+    }
+    // Vraie avancée de la lecture (le petit saut de la relance douce, lui, ne compte pas)
+    if (Math.abs(t - progress.time) > 0.25) {
+      if (recovery.step) trace("lecture repartie");
+      progressRef.current = { time: t, at: now };
+      recoveryRef.current = { step: 0, at: 0 };
+      return;
+    }
+    const starting = phaseRef.current === "loading" || now - lastSeekRef.current < STUCK_START_MS;
+    if (recovery.step === 0 && now - progress.at > (starting ? STUCK_START_MS : STUCK_MS)) {
+      recoveryRef.current = { step: 1, at: now };
+      sessionStatsRef.current.recoveries++;
+      const hls = hlsRef.current;
+      trace("lecture figée", `depuis ${Math.round((now - progress.at) / 1000)} s : reprise au même endroit`);
+      if (hls) {
+        // Images déjà là mais plus décodées : on rebranche le lecteur ; sinon on recharge
+        if (bufferedAhead(video) > 2) hls.recoverMediaError();
+        else hls.startLoad(t);
+      } else {
+        // Safari : un saut sur place lui fait redemander les segments autour de la position
+        video.currentTime = t + 0.1;
+        progressRef.current = { time: t + 0.1, at: progress.at };
+      }
+      return;
+    }
+    if (recovery.step === 1 && now - recovery.at > STUCK_RETRY_MS) {
+      recoveryRef.current = { step: 2, at: now };
+      trace("lecture toujours figée", "nouveau flux à la même position");
+      restartAfterFailure();
+    }
+  };
+
   // Initialisation du flux vidéo
   useEffect(() => {
     pauseTrack();
@@ -618,11 +731,24 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ media, localSrc, onClo
     }, 30000);
     const stallWatch = window.setInterval(() => {
       if (stallStartRef.current && Date.now() - stallStartRef.current > LONG_STALL_MS) maybeDowngrade();
+      watchStuck();
     }, 1000);
+
+    // Contexte utile pour comprendre une lecture qui se passe mal : appli en arrière-plan,
+    // AirPlay vers une télé, image dans l'image
+    const video = videoRef.current as (HTMLVideoElement & { webkitCurrentPlaybackTargetIsWireless?: boolean }) | null;
+    const onVisibility = () => trace("appli", document.visibilityState === "hidden" ? "en arrière-plan" : "au premier plan");
+    const onAirPlay = () => trace("AirPlay", video?.webkitCurrentPlaybackTargetIsWireless ? "activé" : "désactivé");
+    const onPip = (e: Event) => trace("image dans l'image", e.type === "enterpictureinpicture" ? "activée" : "désactivée");
+    document.addEventListener("visibilitychange", onVisibility);
+    video?.addEventListener("webkitcurrentplaybacktargetiswirelesschanged", onAirPlay);
+    video?.addEventListener("enterpictureinpicture", onPip);
+    video?.addEventListener("leavepictureinpicture", onPip);
 
     // Fermeture d'onglet : arrêter le transcodage et enregistrer la position quoi qu'il arrive
     const onPageHide = () => {
-      sendPlaybackLog();
+      trace("page fermée");
+      sendPlaybackLog("pagehide");
       if (sessionRef.current) navigator.sendBeacon?.(`/api/stream/hls/stop?session=${sessionRef.current}`);
       if (txRef.current) navigator.sendBeacon?.(`/api/tx/${txRef.current.job}/stop`);
       beaconTimeline(timeline("stopped"));
@@ -634,11 +760,16 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ media, localSrc, onClo
       clearInterval(ping);
       clearInterval(stallWatch);
       window.removeEventListener("pagehide", onPageHide);
+      document.removeEventListener("visibilitychange", onVisibility);
+      video?.removeEventListener("webkitcurrentplaybacktargetiswirelesschanged", onAirPlay);
+      video?.removeEventListener("enterpictureinpicture", onPip);
+      video?.removeEventListener("leavepictureinpicture", onPip);
       if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
       if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
       loadIdRef.current++;
       const stopped = timeline("stopped");
-      sendPlaybackLog(); // avant teardown, qui remet à zéro les compteurs d'images de <video>
+      // avant teardown, qui remet à zéro les compteurs d'images de <video>
+      sendPlaybackLog(phaseRef.current === "error" ? "error" : "closed");
       teardown();
       reportTimeline(stopped);
     };
@@ -678,6 +809,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ media, localSrc, onClo
   const onPlaying = () => {
     const now = Date.now();
     const stats = sessionStatsRef.current;
+    if (phaseRef.current !== "playing") trace("lecture");
     if (stats.ttffMs == null && stats.firstLoadAt) stats.ttffMs = now - stats.firstLoadAt;
     setPhase("playing");
     restartsRef.current = [];
@@ -695,6 +827,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ media, localSrc, onClo
   const onWaiting = () => {
     const video = videoRef.current;
     if (!video || phase === "loading" || phase === "error") return;
+    if (phase !== "buffering") trace("attente");
     setPhase("buffering");
     // Une attente juste après un saut est normale (le transcodeur redémarre) : ce n'est pas une coupure
     if (!video.seeking && Date.now() - lastSeekRef.current > 2500 && !stallStartRef.current) {
@@ -703,8 +836,12 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ media, localSrc, onClo
   };
 
   const onVideoError = () => {
+    const err = videoRef.current?.error;
+    trace("erreur vidéo", err ? `code ${err.code}${err.message ? ` ${err.message.slice(0, 60)}` : ""}` : "");
     // hls.js gère ses propres erreurs ; ici : lecture directe ou HLS natif (Safari)
     if (hlsRef.current || !activeRef.current || !videoRef.current?.getAttribute("src")) return;
+    // Vidéo reçue mais indécodable : c'est la conversion qui pose problème, pas le réseau
+    if (err?.code === MediaError.MEDIA_ERR_DECODE) conversionFailedRef.current = true;
     restartAfterFailure();
   };
 
@@ -970,15 +1107,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ media, localSrc, onClo
     if (streamKbps) rows.push(["Débit du flux", fmtMbps(streamKbps)]);
     const bw = bandwidthKbps();
     if (bw) rows.push(["Débit mesuré", fmtMbps(bw)]);
-    if (video) {
-      let ahead = 0;
-      for (let i = 0; i < video.buffered.length; i++) {
-        if (video.buffered.start(i) <= video.currentTime + 0.5 && video.buffered.end(i) >= video.currentTime) {
-          ahead = video.buffered.end(i) - video.currentTime;
-        }
-      }
-      rows.push(["Tampon d'avance", fmtSec(ahead)]);
-    }
+    if (video) rows.push(["Tampon d'avance", fmtSec(bufferedAhead(video))]);
     const recent = fragSamplesRef.current.slice(-4);
     if (recent.length >= 2) {
       const ttfb = Math.round(median(recent.map((x) => x.ttfbMs)));
@@ -1052,19 +1181,39 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ media, localSrc, onClo
         playsInline
         onPlaying={onPlaying}
         onWaiting={onWaiting}
-        onSeeking={() => { lastSeekRef.current = Date.now(); }}
+        onSeeking={() => {
+          lastSeekRef.current = Date.now();
+          // Saut venu d'ailleurs que nos boutons (commandes natives en plein écran, écran verrouillé,
+          // AirPlay) : la position de reprise suit tout de suite, sans attendre la fin du saut
+          // (qui n'arrive jamais si le flux est figé, et la relance repartait d'avant le saut)
+          const video = videoRef.current;
+          if (video && video.currentTime > 0 && pendingStartRef.current == null) positionRef.current = video.currentTime;
+        }}
+        onSeeked={() => { pendingStartRef.current = null; }}
+        onStalled={() => trace("plus de données reçues")}
         onPlay={() => { isPlayingRef.current = true; setIsPlaying(true); resetControlsTimeout(); }}
         onPause={() => { isPlayingRef.current = false; setIsPlaying(false); setShowControls(true); }}
         onError={onVideoError}
         onProgress={onProgress}
         onTimeUpdate={() => {
           const video = videoRef.current;
-          if (!video || phase === "loading") return;
+          if (!video) return;
+          // Reprise pas encore appliquée : la position du tout début de la source n'est pas la bonne
+          const pending = pendingStartRef.current;
+          if (pending != null) {
+            if (Math.abs(video.currentTime - pending) > 3) return;
+            pendingStartRef.current = null;
+          }
           // Temps réellement regardé : les sauts (écart > 2 s) ne comptent pas
           const stats = sessionStatsRef.current;
           const delta = video.currentTime - stats.lastTime;
-          if (delta > 0 && delta < 2) stats.watchedS += delta;
+          const advancing = delta > 0 && delta < 2;
           stats.lastTime = video.currentTime;
+          // La lecture avance alors qu'aucun « playing » n'est arrivé (Safari n'en envoie pas
+          // toujours après une attente) : le voile de chargement ne doit pas rester affiché
+          if (advancing && !video.paused && (phase === "loading" || phase === "buffering")) onPlaying();
+          if (phase === "loading" && !advancing) return;
+          if (advancing) stats.watchedS += delta;
           const frames = video.getVideoPlaybackQuality?.();
           if (frames) {
             stats.curDropped = frames.droppedVideoFrames;
