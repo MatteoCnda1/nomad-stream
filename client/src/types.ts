@@ -61,6 +61,9 @@ export interface MediaDetail extends MediaItem {
   missing?: boolean;
   // Version lue (index Plex) quand la fiche en compte plusieurs, dont certaines disparues
   mediaIndex?: number;
+  // Début du générique de fin (ms), quand Plex l'a détecté (Plex Pass) : l'épisode suivant est
+  // proposé à ce moment-là plutôt qu'à la toute fin
+  creditsStart?: number | null;
 }
 
 export interface Season {

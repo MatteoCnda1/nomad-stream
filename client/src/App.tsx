@@ -102,6 +102,14 @@ const Shell: React.FC = () => {
   useHistoryOverlay("queue", isQueueOpen, () => setIsQueueOpen(false));
   useHistoryOverlay("playlist-modal", !!modalTracks?.length, closePlaylistModal);
 
+  // Épisode suivant d'une série, lancé depuis le lecteur : l'épisode fini se ferme (position
+  // enregistrée, conversion arrêtée) et l'écran de chargement du suivant prend sa place, sans
+  // quitter le plein écran (le lecteur reste ouvert pour l'historique)
+  const playNextEpisode = (item: MediaItem) => {
+    setActiveVideoMedia(null);
+    void handlePlayMedia(item);
+  };
+
   // Helper pour lancer n'importe quel média vidéo
   const handlePlayMedia = async (item: MediaItem | MediaDetail) => {
     // Écran de lecture affiché tout de suite, pendant le chargement des métadonnées
@@ -339,6 +347,7 @@ const Shell: React.FC = () => {
           media={activeVideoMedia}
           localSrc={activeLocalSrc}
           onClose={closePlayer}
+          onPlayNext={playNextEpisode}
         />
       )}
 

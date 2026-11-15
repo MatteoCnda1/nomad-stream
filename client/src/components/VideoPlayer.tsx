@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState } from "react";
 import Hls from "hls.js";
 import { MediaDetail, MediaItem } from "../types";
-import { reportTimeline, beaconTimeline, beaconPlaybackLog, getDeviceId } from "../api";
+import { reportTimeline, beaconTimeline, beaconPlaybackLog, getDeviceId, fetchNextEpisode } from "../api";
+import { UpNextCard } from "./UpNextCard";
 import { useAudio } from "../context/AudioContext";
 import {
   ArrowLeft,
@@ -28,6 +29,7 @@ import {
   TxVariant,
   canCopyVideo,
   canDirectPlay,
+  loadAutoNext,
   loadBandwidth,
   loadQualityPref,
   lowerQuality,
@@ -44,6 +46,7 @@ interface VideoPlayerProps {
   media: MediaDetail;
   localSrc?: string | null; // version téléchargée sur l'appareil (mode hors connexion)
   onClose: () => void;
+  onPlayNext?: (item: MediaItem) => void; // épisode suivant d'une série
 }
 
 type Phase = "loading" | "playing" | "buffering" | "error";
@@ -77,6 +80,15 @@ const STUCK_MS = 12000;
 const STUCK_START_MS = 20000;
 const STUCK_RETRY_MS = 10000;
 const MAX_EVENTS = 80;
+
+// Épisode suivant : carte proposée dans les UPNEXT_CARD_S dernières secondes, puis lancement
+// automatique après UPNEXT_COUNTDOWN_S à la fin de l'épisode (ou au début du générique de fin
+// quand Plex l'a détecté). Sans repère du générique, rien ne démarre avant la fin : pas de
+// dernière scène coupée.
+const UPNEXT_CARD_S = 30;
+const UPNEXT_COUNTDOWN_S = 10;
+type UpNextState = { shown: boolean; left: number | null; dismissed: boolean };
+const UPNEXT_IDLE: UpNextState = { shown: false, left: null, dismissed: false };
 
 // Secondes déjà en mémoire devant la position de lecture
 const bufferedAhead = (video: HTMLVideoElement) => {
@@ -162,7 +174,7 @@ const SHORTCUTS: [string, string][] = [
   ["Échap", "Fermer le lecteur"],
 ];
 
-export const VideoPlayer: React.FC<VideoPlayerProps> = ({ media, localSrc, onClose }) => {
+export const VideoPlayer: React.FC<VideoPlayerProps> = ({ media, localSrc, onClose, onPlayNext }) => {
   const { pauseTrack } = useAudio();
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -190,7 +202,10 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ media, localSrc, onClo
   const [bufferedEnd, setBufferedEnd] = useState(0);
   const [duration, setDuration] = useState(media.duration ? media.duration / 1000 : 0);
   const [showControls, setShowControls] = useState(true);
-  const [isFullscreen, setIsFullscreen] = useState(false);
+  // Plein écran demandé sur toute la page (le lecteur la couvre) : il survit au passage à
+  // l'épisode suivant, qui remplace le lecteur
+  const [isFullscreen, setIsFullscreen] = useState(() => !!document.fullscreenElement);
+  const handingOverRef = useRef(false); // lecteur remplacé par celui de l'épisode suivant
   const [menu, setMenu] = useState<"audio" | "subtitles" | "quality" | null>(null);
 
   const [qualityPref, setQualityPref] = useState<QualityPref>(loadQualityPref);
@@ -659,6 +674,89 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ media, localSrc, onClo
     startPlayback(positionRef.current, { quality: next });
   };
 
+  // --- Épisode suivant (voir UPNEXT_CARD_S) ---
+
+  const [nextEpisode, setNextEpisode] = useState<MediaItem | null>(null);
+  const [upNext, setUpNext] = useState<UpNextState>(UPNEXT_IDLE);
+  // État de référence, toujours modifié par changeUpNext : la fin de l'épisode et la dernière
+  // avancée arrivent avant le rendu suivant (et un rendu plus prioritaire, comme la pause de fin,
+  // peut passer avant), il ne faut pas lancer deux fois le compte à rebours
+  const upNextRef = useRef(upNext);
+  const changeUpNext = (next: UpNextState) => {
+    upNextRef.current = next;
+    setUpNext(next);
+  };
+  const [autoNext] = useState(loadAutoNext);
+
+  useEffect(() => {
+    if (media.type !== "episode" || !onPlayNext) return;
+    let alive = true;
+    fetchNextEpisode(media.id)
+      .then((next) => alive && setNextEpisode(next))
+      .catch(() => {}); // hors connexion : pas de proposition
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Recalculé à chaque avancée de la lecture et à la fin de l'épisode
+  const evaluateUpNext = () => {
+    const video = videoRef.current;
+    if (!nextEpisode || !video) return;
+    const total = isFinite(video.duration) && video.duration > 0 ? video.duration : duration;
+    const t = video.currentTime;
+    const ended = video.ended;
+    // Repère du générique pris au sérieux seulement dans la seconde moitié de l'épisode
+    const credits = media.creditsStart ? media.creditsStart / 1000 : null;
+    const inCredits = credits != null && total > 0 && credits > total / 2 && t >= credits;
+    const nearEnd = ended || (total > 0 && total - t <= UPNEXT_CARD_S);
+    const s = upNextRef.current;
+    if (!nearEnd && !inCredits) {
+      // Retour en arrière avant la fin : tout repart de zéro
+      if (s !== UPNEXT_IDLE && (s.shown || s.left != null || s.dismissed)) changeUpNext(UPNEXT_IDLE);
+      return;
+    }
+    const shown = !s.dismissed || ended; // masquée : elle revient quand l'épisode est fini
+    const startCountdown = autoNext && !s.dismissed && s.left == null && (ended || inCredits);
+    if (shown !== s.shown || startCountdown) {
+      if (startCountdown) trace("épisode suivant", `compte à rebours (${nextEpisode.id})`);
+      changeUpNext({ ...s, shown, left: startCountdown ? UPNEXT_COUNTDOWN_S : s.left });
+    }
+  };
+
+  const playNextEpisode = () => {
+    if (!nextEpisode || !onPlayNext) return;
+    trace("épisode suivant", `lancé (${nextEpisode.id})`);
+    handingOverRef.current = true;
+    changeUpNext({ shown: false, left: null, dismissed: true });
+    onPlayNext(nextEpisode);
+  };
+
+  const cancelUpNext = () => {
+    trace("épisode suivant", "annulé");
+    changeUpNext({ shown: !!videoRef.current?.ended, left: null, dismissed: true });
+  };
+
+  // Compte à rebours : une seconde de moins chaque seconde, sauf si la vidéo est mise en pause
+  // pendant le générique
+  const counting = upNext.left != null;
+  useEffect(() => {
+    if (!counting) return;
+    const timer = window.setInterval(() => {
+      const video = videoRef.current;
+      if (video && video.paused && !video.ended) return;
+      const s = upNextRef.current;
+      if (s.left != null) changeUpNext({ ...s, left: Math.max(0, s.left - 1) });
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [counting]);
+
+  useEffect(() => {
+    if (upNext.left === 0) playNextEpisode();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [upNext.left]);
+
   // Lecture qui n'avance plus alors qu'elle n'est pas en pause (voir STUCK_MS)
   const watchStuck = () => {
     const video = videoRef.current;
@@ -950,7 +1048,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ media, localSrc, onClo
   const toggleFullscreen = () => {
     if (!containerRef.current) return;
     if (!document.fullscreenElement) {
-      containerRef.current.requestFullscreen().catch((err) => console.log(err));
+      document.documentElement.requestFullscreen().catch((err) => console.log(err));
       setIsFullscreen(true);
     } else {
       document.exitFullscreen().catch((err) => console.log(err));
@@ -1033,6 +1131,11 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ media, localSrc, onClo
         setShowHelp(true);
         break;
       case "Escape":
+        // Compte à rebours de l'épisode suivant : Échap l'annule, sans fermer le lecteur
+        if (upNextRef.current.left != null) {
+          cancelUpNext();
+          break;
+        }
         if (document.fullscreenElement) return; // le navigateur quitte d'abord le plein écran
         onClose();
         break;
@@ -1059,6 +1162,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ media, localSrc, onClo
     return () => {
       window.removeEventListener("keydown", onKey);
       document.removeEventListener("fullscreenchange", onFullscreen);
+      // Lecteur fermé : on quitte le plein écran, sauf pour enchaîner sur l'épisode suivant
+      if (document.fullscreenElement && !handingOverRef.current) document.exitFullscreen().catch(() => {});
       if (flashTimeoutRef.current) clearTimeout(flashTimeoutRef.current);
     };
   }, []);
@@ -1222,11 +1327,13 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ media, localSrc, onClo
           if (video.currentTime > 0) positionRef.current = video.currentTime;
           setCurrentTime(video.currentTime);
           onProgress();
+          evaluateUpNext();
         }}
         onLoadedMetadata={() => videoRef.current && isFinite(videoRef.current.duration) && setDuration(videoRef.current.duration)}
         onEnded={() => {
           positionRef.current = videoRef.current?.duration || positionRef.current;
           reportTimeline(timeline("stopped"));
+          evaluateUpNext();
         }}
         className="w-full h-full object-contain"
       />
@@ -1498,6 +1605,17 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ media, localSrc, onClo
           </div>
         </div>
       </div>
+
+      {/* ÉPISODE SUIVANT (reste affiché quand les commandes s'effacent) */}
+      {nextEpisode && upNext.shown && phase !== "error" && (
+        <UpNextCard
+          item={nextEpisode}
+          secondsLeft={upNext.left}
+          total={UPNEXT_COUNTDOWN_S}
+          onPlay={playNextEpisode}
+          onCancel={cancelUpNext}
+        />
+      )}
 
       {/* MENUS : QUALITÉ, PISTES AUDIO & SOUS-TITRES */}
       {menu && (
