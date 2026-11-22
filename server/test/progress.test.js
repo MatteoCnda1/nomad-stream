@@ -37,6 +37,19 @@ describe("règles", () => {
     assert.equal(body.onDeck[0].viewOffset, 900, "réponse d'origine (en cache) intacte");
   });
 
+  test("vu et dernière lecture du profil à la place de ceux de Plex (#98)", () => {
+    const ep = (id) => ({ id, type: "episode", duration: 1000, viewOffset: 0, progressPercent: 0, watched: true, lastViewedAt: 5 });
+    const [vu, entame, enFile, inconnu] = overlayProgress([ep("1"), ep("2"), ep("3"), ep("4")], {
+      1: { offset: 0, watched: true, updatedAt: 100 },
+      2: { offset: 400, updatedAt: 200 },
+      3: { offset: 0, upNext: true, updatedAt: 300 },
+    });
+    assert.deepEqual([vu.watched, vu.lastViewedAt], [true, 100]);
+    assert.deepEqual([entame.watched, entame.lastViewedAt, entame.progressPercent], [false, 200, 40]);
+    assert.deepEqual([enFile.watched, enFile.lastViewedAt], [false, null], "épisode suivant mis en file : pas encore regardé");
+    assert.deepEqual([inconnu.watched, inconnu.lastViewedAt], [false, null], "vu par le compte Plex, pas par le profil");
+  });
+
   test("« Continuer la lecture » : en cours et épisodes suivants, du plus récent au plus ancien", () => {
     const ids = deckIds({
       a: { offset: 10, updatedAt: 1 },
@@ -113,6 +126,37 @@ describe("routes, avec deux profils", () => {
     deck = (await (await as(guest, "/api/hubs")).json()).onDeck.map((i) => i.id);
     assert.ok(!deck.includes("301"), "épisode vu retiré");
     assert.equal(deck[0], "302", "épisode suivant en tête");
+  });
+
+  test("fiche d'une série : vu, dernière lecture et série de chaque épisode, propres au profil (#98)", async () => {
+    const state = (body) => Object.fromEntries(body.episodes.map((e) => [e.id, [e.watched, e.lastViewedAt, e.progressPercent]]));
+    const plexView = await (await as(owner, "/api/shows/400")).json();
+    assert.deepEqual(state(plexView), {
+      401: [true, 1_700_000_010_000, 0],
+      411: [true, 1_700_000_100_000, 0],
+      412: [true, 1_700_000_200_000, 0],
+      413: [false, 1_700_000_050_000, 25],
+      414: [false, null, 0],
+    });
+    assert.ok(plexView.episodes.every((e) => e.showId === "400"), "série de chaque épisode");
+    assert.equal(plexView.show.showId, undefined);
+
+    // L'invité ne voit ni les épisodes vus ni la reprise du compte Plex
+    let guestView = await (await as(guest, "/api/shows/400")).json();
+    assert.ok(guestView.episodes.every((e) => !e.watched && e.lastViewedAt === null && e.progressPercent === 0));
+    const t0 = Date.now();
+    await timeline(guest, { ratingKey: "411", state: "stopped", time: 1_150_000, duration: 1_200_000 });
+    await timeline(guest, { ratingKey: "413", state: "stopped", time: 300_000, duration: 1_200_000 });
+    await new Promise((r) => setTimeout(r, 300)); // 412 mis en file comme épisode suivant
+    guestView = state(await (await as(guest, "/api/shows/400")).json());
+    assert.equal(guestView[411][0], true);
+    assert.ok(guestView[411][1] >= t0);
+    assert.deepEqual(guestView[412], [false, null, 0], "en file, pas encore regardé");
+    assert.equal(guestView[413][2], 25);
+    assert.ok(guestView[413][1] >= guestView[411][1]);
+    assert.deepEqual(guestView[401], [false, null, 0]);
+    // Le compte Plex garde les siens
+    assert.deepEqual(state(await (await as(owner, "/api/shows/400")).json())[413], [false, 1_700_000_050_000, 25]);
   });
 
   test("musique : pas de position gardée pour un profil", async () => {

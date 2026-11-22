@@ -16,5 +16,7 @@
     "noUnusedParameters": false,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src"]
+  "include": ["src"],
+  // Tests lancés par Node (npm test), sans les types de Node
+  "exclude": ["src/**/*.test.ts"]
 }

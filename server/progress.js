@@ -27,7 +27,8 @@ export function readCookie(req, name) {
   return null;
 }
 
-// Position d'un profil à la place de celle de Plex, partout dans une réponse (copie)
+// Position d'un profil à la place de celle de Plex, partout dans une réponse (copie), avec ce
+// qu'il a vu et quand (épisode à proposer sur la fiche d'une série, #98)
 export function overlayProgress(body, entries) {
   const visit = (v) => {
     if (Array.isArray(v)) return v.map(visit);
@@ -39,6 +40,9 @@ export function overlayProgress(body, entries) {
       const offset = e && !e.watched ? e.offset : 0;
       out.viewOffset = offset;
       out.progressPercent = out.duration > 0 ? Math.min(100, Math.round((offset / out.duration) * 100)) : 0;
+      out.watched = !!e?.watched;
+      // Épisode suivant mis en file (upNext) : pas encore regardé
+      out.lastViewedAt = e && (e.watched || offset > 0) ? e.updatedAt : null;
     }
     return out;
   };

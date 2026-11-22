@@ -30,6 +30,30 @@ export const EPISODES = [301, 302, 303].map((id, i) => ({
   ...(id === 302 ? { Marker: [{ type: "intro", startTimeOffset: 0, endTimeOffset: 60_000 }, { type: "credits", startTimeOffset: 1_150_000, endTimeOffset: 1_200_000, final: true }] } : {}),
 }));
 
+// Série 400 vue en partie par le compte Plex (#98) : un épisode spécial vu (saison 0, rangée
+// en premier par Plex), S01E01 et S01E02 vus, S01E03 entamé avant eux, S01E04 jamais lancé
+export const SHOW_400 = { ratingKey: "400", key: "/library/metadata/400/children", type: "show", title: "Autre série", childCount: 2 };
+export const SEASONS_400 = [0, 1].map((n) => ({ ratingKey: String(490 + n), type: "season", title: n ? "Saison 1" : "Specials", index: n, leafCount: n ? 4 : 1 }));
+export const EPISODES_400 = [
+  { id: 401, season: 0, index: 1, viewCount: 1, lastViewedAt: 1_700_000_010 },
+  { id: 411, season: 1, index: 1, viewCount: 1, lastViewedAt: 1_700_000_100 },
+  { id: 412, season: 1, index: 2, viewCount: 2, lastViewedAt: 1_700_000_200 },
+  { id: 413, season: 1, index: 3, viewOffset: 300_000, lastViewedAt: 1_700_000_050 },
+  { id: 414, season: 1, index: 4 },
+].map(({ id, season, index, ...seen }) => ({
+  ratingKey: String(id),
+  key: `/library/metadata/${id}`,
+  type: "episode",
+  title: `Épisode ${index}`,
+  grandparentTitle: "Autre série",
+  grandparentRatingKey: "400",
+  parentIndex: season,
+  index,
+  duration: 1_200_000,
+  ...seen,
+  Media: [{ container: "mp4", Part: [{ id: id + 10, key: `/library/parts/${id + 10}/file.mp4`, file: `/media/Series/${id}.mp4` }] }],
+}));
+
 // Bibliothèque musicale : artistes (type 8), albums (9) et titres (10)
 const artist = (id, title, genres = [], similar = []) => ({
   ratingKey: String(id),
@@ -132,7 +156,10 @@ function respond(url, res) {
   // « En cours » du compte Plex : le film 1, entamé
   if (p === "/library/onDeck") return json({ Metadata: [{ ...movie(1, "Alpha"), viewOffset: 600_000 }] });
   if (p === "/library/metadata/300/allLeaves") return json({ Metadata: EPISODES });
-  const episode = EPISODES.find((e) => p === `/library/metadata/${e.ratingKey}`);
+  if (p === "/library/metadata/400") return json({ Metadata: [SHOW_400] });
+  if (p === "/library/metadata/400/children") return json({ Metadata: SEASONS_400 });
+  if (p === "/library/metadata/400/allLeaves") return json({ Metadata: EPISODES_400 });
+  const episode = [...EPISODES, ...EPISODES_400].find((e) => p === `/library/metadata/${e.ratingKey}`);
   if (episode) return json({ Metadata: [episode] });
   if (/^\/library\/metadata\/\d+$/.test(p)) {
     const id = p.split("/")[3];

@@ -162,6 +162,8 @@ type TimelineParams = {
   type?: "track"; // musique : pas de position de reprise propre à un profil
 };
 
+export const PROGRESS_SAVED = "nomad-progress-saved";
+
 // Les réponses mises en cache contiennent la position de reprise : on les oublie après chaque rapport
 function forgetProgress(ratingKey: string) {
   apiCache.delete(`${BASE_URL}/api/hubs`);
@@ -177,6 +179,11 @@ export async function reportTimeline(params: TimelineParams): Promise<void> {
       body: JSON.stringify({ ...params, client: getDeviceId() }),
     });
     forgetProgress(params.ratingKey);
+    // Fin de lecture d'une vidéo enregistrée : la fiche d'une série restée ouverte sous le lecteur
+    // se met à jour (épisode à proposer, épisodes vus)
+    if (params.state === "stopped" && params.type !== "track") {
+      window.dispatchEvent(new CustomEvent(PROGRESS_SAVED, { detail: params.ratingKey }));
+    }
   } catch (err) {
     console.warn("Timeline reporting failed:", err);
   }
