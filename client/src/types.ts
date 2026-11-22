@@ -14,6 +14,9 @@ export interface MediaItem {
   durationMinutes: number;
   viewOffset: number;
   progressPercent: number;
+  watched?: boolean; // film, épisode : vu en entier au moins une fois (par le profil)
+  lastViewedAt?: number | null; // film, épisode : dernière lecture (ms), finie ou entamée
+  showId?: string; // épisode : sa série
   rating?: number | null;
   contentRating?: string;
   studio?: string;

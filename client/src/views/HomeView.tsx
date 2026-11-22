@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { HubData, MediaItem, MusicGenre } from "../types";
 import { fetchHubs, fetchMusicGenres, prefetchMetadata } from "../api";
-import { Plus, Check, Flame, Sparkles } from "lucide-react";
+import { Plus, Check, Flame, Info, Sparkles } from "lucide-react";
 import { useWishlist } from "../context/WishlistContext";
 import { MusicTile, PlayGlyph, PosterCard, SectionHeader, Sk } from "../components/ui";
 import { GenreTile, usePlayGenre } from "../components/GenreMixes";
@@ -142,6 +142,17 @@ export const HomeView: React.FC<HomeViewProps> = ({
   // Les éléments qui lanceront directement la lecture : métadonnées préchargées dès le toucher
   const willPlay = (item: MediaItem) => item.type === "episode" || (item.type === "movie" && item.progressPercent > 0);
 
+  // Fiche d'un élément que le toucher lance : la série d'un épisode (#98), la fiche d'un film
+  const detailLink = (item: MediaItem) => {
+    if (item.type === "episode" && item.showId) {
+      const showId = item.showId;
+      return { label: "Voir la série", aria: `Fiche de la série ${displayTitle(item)}`, open: () => onOpenShow(showId) };
+    }
+    if (item.type === "movie") return { label: "Voir la fiche", aria: `Fiche du film ${item.title}`, open: () => onOpenMovie(item.id) };
+    return null;
+  };
+  const heroDetail = hero && willPlay(hero) ? detailLink(hero) : null;
+
   const heroBadge = (item: MediaItem) => {
     if (item.progressPercent > 0) return item.type === "episode" ? `Reprendre · ${episodeCode(item)}` : "Reprendre";
     return item.type === "show" ? "Nouvelle série" : item.type === "episode" ? "Épisode suivant" : "Nouveau film";
@@ -235,6 +246,17 @@ export const HomeView: React.FC<HomeViewProps> = ({
                   <PlayGlyph className="w-4 h-4" />
                   {hero.progressPercent > 0 ? "Reprendre" : hero.type === "show" ? "Voir la série" : "Regarder"}
                 </button>
+                {heroDetail && (
+                  <button
+                    type="button"
+                    onClick={heroDetail.open}
+                    aria-label={heroDetail.aria}
+                    className="press w-12 lg:w-auto h-12 lg:px-5 rounded-full lg:border lg:border-white/30 bg-white/[.14] lg:bg-white/10 backdrop-blur-md inline-flex items-center justify-center gap-2 font-medium"
+                  >
+                    <Info className="w-[18px] h-[18px]" strokeWidth={2} />
+                    <span className="hidden lg:inline">{heroDetail.label}</span>
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => toggle(hero)}
@@ -285,32 +307,46 @@ export const HomeView: React.FC<HomeViewProps> = ({
         <section className="mt-7 lg:mt-9">
           <SectionHeader title="Reprendre la lecture" />
           <div className={RESUME_ROW}>
-            {onDeck.slice(0, 12).map((item) => (
-              <div key={item.id} className="flex-[0_0_230px] sm:flex-[0_0_280px] lg:flex-none">
-                <button
-                  type="button"
-                  onClick={() => onPlayMedia(item)}
-                  onPointerDown={() => prefetchMetadata(item.id)}
-                  className="lift block w-full text-left"
-                >
-                  <div className="zoom relative aspect-video rounded-2xl bg-card">
-                    <img
-                      src={item.art || item.thumb || ""}
-                      alt=""
-                      loading="lazy"
-                      decoding="async"
-                      className="z w-full h-full object-cover"
-                    />
-                    <div className="absolute inset-0 bg-gradient-to-b from-transparent from-55% to-black/60" />
-                    <div className="absolute left-3 right-3 bottom-3 h-1 rounded bg-white/30">
-                      <div className="h-full rounded bg-accent" style={{ width: `${item.progressPercent}%` }} />
+            {onDeck.slice(0, 12).map((item) => {
+              const detail = detailLink(item);
+              return (
+                <div key={item.id} className="lift relative flex-[0_0_230px] sm:flex-[0_0_280px] lg:flex-none">
+                  <button
+                    type="button"
+                    onClick={() => onPlayMedia(item)}
+                    onPointerDown={() => prefetchMetadata(item.id)}
+                    className="block w-full text-left"
+                  >
+                    <div className="zoom relative aspect-video rounded-2xl bg-card">
+                      <img
+                        src={item.art || item.thumb || ""}
+                        alt=""
+                        loading="lazy"
+                        decoding="async"
+                        className="z w-full h-full object-cover"
+                      />
+                      <div className="absolute inset-0 bg-gradient-to-b from-transparent from-55% to-black/60" />
+                      <div className="absolute left-3 right-3 bottom-3 h-1 rounded bg-white/30">
+                        <div className="h-full rounded bg-accent" style={{ width: `${item.progressPercent}%` }} />
+                      </div>
                     </div>
-                  </div>
-                  <div className="mt-3 text-[15px] font-semibold truncate">{displayTitle(item)}</div>
-                  <div className="mt-0.5 text-[13px] text-muted truncate">{resumeSubtitle(item)}</div>
-                </button>
-              </div>
-            ))}
+                    <div className="mt-3 text-[15px] font-semibold truncate">{displayTitle(item)}</div>
+                    <div className="mt-0.5 text-[13px] text-muted truncate">{resumeSubtitle(item)}</div>
+                  </button>
+                  {detail && (
+                    <button
+                      type="button"
+                      onClick={detail.open}
+                      aria-label={detail.aria}
+                      title={detail.label}
+                      className="press absolute right-2 top-2 w-9 h-9 rounded-full bg-black/45 backdrop-blur-md grid place-items-center text-white"
+                    >
+                      <Info className="w-[18px] h-[18px]" strokeWidth={2} />
+                    </button>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </section>
       )}

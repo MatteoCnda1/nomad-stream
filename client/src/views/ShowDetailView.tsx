@@ -1,12 +1,15 @@
 import React, { useEffect, useState } from "react";
 import { ShowDetail, MediaItem } from "../types";
-import { fetchShowDetail, prefetchMetadata } from "../api";
+import { fetchShowDetail, prefetchMetadata, PROGRESS_SAVED } from "../api";
 import { Plus, Check } from "lucide-react";
 import { useWishlist } from "../context/WishlistContext";
 import { PlayGlyph, Pills } from "../components/ui";
 import { EpisodeDownloadButton } from "../components/DownloadButton";
 import { DetailHero, DetailSkeleton, ExpandableSummary, OutlineButton } from "./MovieDetailView";
 import { episodeCode, formatRuntime } from "../utils/format";
+import { pickUpNext, seasonLabel, sortSeasons, UpNextAction } from "../utils/episodes";
+
+const ACTION_LABEL: Record<UpNextAction, string> = { resume: "Reprendre", play: "Regarder", replay: "Revoir" };
 
 interface ShowDetailViewProps {
   showId: string;
@@ -26,22 +29,33 @@ export const ShowDetailView: React.FC<ShowDetailViewProps> = ({
   const { isSaved, toggle } = useWishlist();
 
   useEffect(() => {
-    fetchShowDetail(showId)
-      .then((data) => {
-        setDetail(data);
-        if (data.seasons.length > 0) {
-          setSelectedSeasonNumber(data.seasons[0].seasonNumber);
-        }
-        setLoading(false);
-        // Précharger l'épisode que "Regarder" lancera
-        const next = data.episodes.find((ep) => ep.progressPercent > 0) || data.episodes[0];
-        if (next) prefetchMetadata(next.id);
-      })
-      .catch((err) => {
-        console.error(err);
-        setError(true);
-        setLoading(false);
-      });
+    let alive = true;
+    // Ouverture, puis à chaque fin de lecture enregistrée (la fiche reste ouverte sous le lecteur) :
+    // saison de l'épisode à proposer, et préchargement de celui-ci
+    const load = (initial: boolean) =>
+      fetchShowDetail(showId)
+        .then((data) => {
+          if (!alive) return;
+          setDetail(data);
+          const next = pickUpNext(data.episodes)?.episode;
+          const season = next?.seasonNumber ?? sortSeasons(data.seasons)[0]?.seasonNumber;
+          if (season != null) setSelectedSeasonNumber(season);
+          setLoading(false);
+          if (next) prefetchMetadata(next.id);
+        })
+        .catch((err) => {
+          console.error(err);
+          if (!alive || !initial) return; // une mise à jour ratée garde la fiche affichée
+          setError(true);
+          setLoading(false);
+        });
+    load(true);
+    const refresh = () => load(false);
+    window.addEventListener(PROGRESS_SAVED, refresh);
+    return () => {
+      alive = false;
+      window.removeEventListener(PROGRESS_SAVED, refresh);
+    };
   }, [showId]);
 
   if (error) {
@@ -62,10 +76,13 @@ export const ShowDetailView: React.FC<ShowDetailViewProps> = ({
 
   if (loading || !detail) return <DetailSkeleton />;
 
-  const { show, seasons, episodes } = detail;
+  const { show, episodes } = detail;
+  const seasons = sortSeasons(detail.seasons);
+  // Les épisodes spéciaux ne comptent pas comme une saison
+  const seasonCount = seasons.filter((s) => s.seasonNumber !== 0).length || seasons.length;
   const currentEpisodes = episodes.filter((ep) => ep.seasonNumber === selectedSeasonNumber);
-  // Épisode à lancer : celui en cours, sinon le tout premier
-  const nextEpisode = episodes.find((ep) => ep.progressPercent > 0) || episodes[0];
+  const upNext = pickUpNext(episodes);
+  const nextEpisode = upNext?.episode;
   const saved = isSaved(show.id);
 
   const handlePlayEpisode = (ep: MediaItem) => onPlayMedia(ep);
@@ -80,7 +97,7 @@ export const ShowDetailView: React.FC<ShowDetailViewProps> = ({
           {show.year && <span>{show.year}</span>}
           {show.year && <span aria-hidden="true">·</span>}
           <span>
-            {seasons.length} {seasons.length > 1 ? "saisons" : "saison"}
+            {seasonCount} {seasonCount > 1 ? "saisons" : "saison"}
           </span>
           {show.contentRating && (
             <span className="px-1.5 py-px border border-line2 rounded-[5px] text-xs">{show.contentRating}</span>
@@ -102,14 +119,14 @@ export const ShowDetailView: React.FC<ShowDetailViewProps> = ({
         )}
 
         <div className="mt-5 flex gap-2.5">
-          {nextEpisode && (
+          {upNext && nextEpisode && (
             <button
               type="button"
               onClick={() => handlePlayEpisode(nextEpisode)}
               className="press flex-1 sm:flex-none sm:px-8 h-[52px] rounded-2xl bg-accent hover:bg-accent-hover text-white inline-flex items-center justify-center gap-2.5 font-semibold text-base"
             >
               <PlayGlyph className="w-4 h-4" />
-              {nextEpisode.progressPercent > 0 ? "Reprendre" : "Regarder"}
+              {ACTION_LABEL[upNext.action]}
               <span className="font-normal opacity-80">{episodeCode(nextEpisode)}</span>
             </button>
           )}
@@ -133,7 +150,7 @@ export const ShowDetailView: React.FC<ShowDetailViewProps> = ({
             className="mt-6 -mx-4 px-4 sm:-mx-6 sm:px-6 lg:mx-0 lg:px-0"
             value={String(selectedSeasonNumber)}
             onChange={(v) => setSelectedSeasonNumber(Number(v))}
-            options={seasons.map((s) => ({ id: String(s.seasonNumber), label: s.title, count: s.episodeCount }))}
+            options={seasons.map((s) => ({ id: String(s.seasonNumber), label: seasonLabel(s), count: s.episodeCount }))}
           />
         )}
 
@@ -158,6 +175,14 @@ export const ShowDetailView: React.FC<ShowDetailViewProps> = ({
                   <span className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-10 h-10 rounded-full bg-black/45 backdrop-blur-md grid place-items-center text-white opacity-0 group-hover:opacity-100 transition-opacity">
                     <PlayGlyph className="w-3.5 h-3.5 ml-0.5" />
                   </span>
+                  {ep.watched && (
+                    <span
+                      aria-hidden="true"
+                      className="absolute right-1.5 top-1.5 w-6 h-6 rounded-full bg-black/55 backdrop-blur-md grid place-items-center text-white"
+                    >
+                      <Check className="w-3.5 h-3.5" strokeWidth={2.6} />
+                    </span>
+                  )}
                   {ep.progressPercent > 0 && (
                     <div className="absolute left-0 right-0 bottom-0 h-1 bg-white/25">
                       <div className="h-full bg-accent" style={{ width: `${ep.progressPercent}%` }} />
@@ -168,6 +193,7 @@ export const ShowDetailView: React.FC<ShowDetailViewProps> = ({
                   <div className="text-xs text-muted">
                     Épisode {ep.episodeNumber}
                     {ep.durationMinutes > 0 && ` · ${formatRuntime(ep.durationMinutes)}`}
+                    {ep.watched && " · Vu"}
                   </div>
                   <h3 className="mt-0.5 text-[15px] font-semibold truncate">{ep.title}</h3>
                   {ep.summary && (

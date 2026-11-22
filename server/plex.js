@@ -153,6 +153,7 @@ export function formatMediaItem(item) {
 
   const isAudio = item.type === "track" || item.type === "album" || item.type === "artist";
   const isEpisode = item.type === "episode";
+  const isVideo = isEpisode || item.type === "movie";
   const thumbDim = isAudio ? "width=300&height=300" : isEpisode ? "width=480&height=270" : "width=300&height=450";
 
   return {
@@ -171,6 +172,15 @@ export function formatMediaItem(item) {
     durationMinutes: Math.round(duration / 60000),
     viewOffset: viewOffset,
     progressPercent: progressPercent,
+    // Film ou épisode : vu en entier au moins une fois, et dernière lecture (ms, comme les dates
+    // de la progression des profils), qu'il soit fini ou entamé. Un épisode vu jusqu'au bout n'a
+    // plus de position de reprise : sans ça, la fiche d'une série ne savait pas où en reprendre (#98).
+    ...(isVideo && {
+      watched: (item.viewCount || 0) > 0,
+      lastViewedAt: item.lastViewedAt ? item.lastViewedAt * 1000 : null,
+    }),
+    // Épisode : sa série, pour en ouvrir la fiche depuis « Reprendre la lecture »
+    ...(isEpisode && item.grandparentRatingKey && { showId: String(item.grandparentRatingKey) }),
     rating: item.audienceRating || item.rating || null,
     contentRating: item.contentRating,
     studio: item.studio,

@@ -38,6 +38,8 @@ jobs:
           cache: npm
           cache-dependency-path: client/package-lock.json
       - run: npm ci
+      # Choix de l'épisode sur la fiche d'une série (Node lit le TypeScript)
+      - run: npm test
       # "build" = tsc (typecheck strict) puis vite build
       - run: npm run build
 
