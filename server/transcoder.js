@@ -9,6 +9,7 @@
 // pause quand il a assez d'avance.
 import { spawn, spawnSync, execFile } from "child_process";
 import fs from "fs";
+import os from "os";
 import path from "path";
 import crypto from "crypto";
 
@@ -19,8 +20,8 @@ const SEEK_RESTART_GAP = 5; // segment demandé à plus de 20 s devant la produc
 const SEGMENT_WAIT_MS = 45000;
 const IDLE_KILL_MS = 5 * 60 * 1000; // plus aucune requête depuis 5 min : ffmpeg est arrêté
 const JOB_TTL_MS = 45 * 60 * 1000; // segments conservés 45 min (reprise, retour en arrière)
-const MAX_RUNNING = 3;
-const BUSY_MS = 60 * 1000;
+const ACTIVE_MS = 60 * 1000; // lecture en cours : un segment demandé dans la dernière minute
+const DEFAULT_GPU_SLOTS = 4;
 const SLOW_SEGMENT_MS = 8000; // attente d'un segment au-delà de laquelle on le note dans le journal
 const AUDIO_KBPS = 128;
 
@@ -34,7 +35,75 @@ export const RUNGS = [
 
 const HDR_TRANSFERS = new Set(["smpte2084", "arib-std-b67"]);
 
-export function createTranscoder({ device, cacheDir, driver = "iHD", mediaMap = [] }) {
+// Décodeurs matériels, lus avec vainfo au démarrage : codec ffmpeg -> profondeur maximale (bits).
+// Un iGPU plus récent (N100, 11e génération…) décode aussi le HEVC 10 bits, le VP9 ou l'AV1, qui
+// passent alors entièrement par l'iGPU sans rien changer ici.
+const VA_DECODERS = [
+  [/^VAProfileH264(Main|High|ConstrainedBaseline)$/, "h264", 8],
+  [/^VAProfileHEVCMain$/, "hevc", 8],
+  [/^VAProfileHEVCMain10$/, "hevc", 10],
+  [/^VAProfileVP9Profile0$/, "vp9", 8],
+  [/^VAProfileVP9Profile2$/, "vp9", 10],
+  [/^VAProfileAV1Profile0$/, "av1", 10], // profil Main : 8 et 10 bits
+  [/^VAProfileMPEG2(Main|Simple)$/, "mpeg2video", 8],
+];
+
+// Sans vainfo : ceux de l'iGPU de pve (Gen9, HD Graphics 530)
+export const GEN9_DECODERS = new Map([["h264", 8], ["hevc", 8], ["mpeg2video", 8]]);
+
+export function parseVaDecoders(text) {
+  const found = new Map();
+  for (const line of String(text).split("\n")) {
+    const m = /^\s*(VAProfile\w+)\s*:\s*VAEntrypointVLD\b/.exec(line);
+    if (!m) continue;
+    for (const [re, codec, depth] of VA_DECODERS) {
+      if (re.test(m[1])) found.set(codec, Math.max(found.get(codec) || 0, depth));
+    }
+  }
+  return found;
+}
+
+// Profondeur des formats d'image 4:2:0 que l'iGPU sait décoder ; le reste (4:2:2, 4:4:4…) passe
+// par le processeur
+const PIX_DEPTH = { yuv420p: 8, yuvj420p: 8, nv12: 8, yuv420p10le: 10, yuv420p10be: 10, p010le: 10 };
+
+export function hwDecodable(video, decoders) {
+  const depth = PIX_DEPTH[video.pixFmt];
+  const max = decoders.get(video.codec);
+  return !!depth && !!max && depth <= max;
+}
+
+// Coût d'une conversion en temps réel (#70), mesuré sur pve (i5-6500T, HD Graphics 530) le 26/11/2026 :
+// - décodage par l'iGPU : un 1080p H.264 converti en 4 paliers à 5,3x le temps réel ; le
+//   processeur ne fait que l'audio et le multiplexage ;
+// - décodage par le processeur (HEVC 10 bits 1080p) : 2,5 cœurs à 2,7x, soit un cœur en temps réel ;
+// - HDR (réduction et conversion des couleurs au processeur) : 1,4-1,7x le temps réel sur 4 cœurs.
+// cpu : cœurs ; gpu : places sur l'iGPU (une par conversion, deux au-delà du 1080p).
+export function conversionCost(video, hwDecode) {
+  const scale = ((video.width || 1920) * (video.height || 1080)) / (1920 * 1080);
+  const gpu = scale > 1.5 ? 2 : 1;
+  if (hwDecode) return { cpu: 0.1, gpu };
+  if (video.hdr) return { cpu: 2.5, gpu };
+  return { cpu: Math.min(2.5, Math.max(0.5, Math.round(scale * 10) / 10)), gpu };
+}
+
+// Une conversion de plus tient-elle ? La première passe toujours, même plus lourde que le budget.
+export function fitsBudget(used, cost, budget) {
+  if (used.conversions === 0) return true;
+  return used.cpu + cost.cpu <= budget.cpu + 1e-9 && used.gpu + cost.gpu <= budget.gpu;
+}
+
+function detectDecoders(device, driver) {
+  const r = spawnSync("vainfo", ["--display", "drm", "--device", device], {
+    env: { ...process.env, LIBVA_DRIVER_NAME: driver },
+    encoding: "utf8",
+    timeout: 10000,
+  });
+  const found = r.status === 0 ? parseVaDecoders(r.stdout) : new Map();
+  return found.size > 0 ? found : null;
+}
+
+export function createTranscoder({ device, cacheDir, driver = "iHD", mediaMap = [], cpuBudget, gpuSlots }) {
   const txDir = path.join(cacheDir, "tx");
   const jobs = new Map();
   const probeCache = new Map();
@@ -43,10 +112,21 @@ export function createTranscoder({ device, cacheDir, driver = "iHD", mediaMap = 
   const available = hasFfmpeg && fs.existsSync(device);
   const unavailableReason = !hasFfmpeg ? "ffmpeg absent" : !fs.existsSync(device) ? `${device} absent` : null;
 
+  // Ce que l'iGPU décode, et ce que la machine peut convertir en même temps : un cœur reste pour
+  // le reste (passerelle, réseau). NOMAD_TX_CPU et NOMAD_TX_GPU les ajustent pour un autre matériel.
+  const detected = available ? detectDecoders(device, driver) : null;
+  const decoders = detected || GEN9_DECODERS;
+  const budget = {
+    cpu: cpuBudget > 0 ? cpuBudget : Math.max(1, (os.availableParallelism?.() ?? os.cpus().length) - 1),
+    gpu: gpuSlots > 0 ? gpuSlots : DEFAULT_GPU_SLOTS,
+  };
+
   if (available) {
     // Les sessions d'un précédent démarrage ne servent plus à rien
     fs.rmSync(txDir, { recursive: true, force: true });
     fs.mkdirSync(txDir, { recursive: true });
+    const list = [...decoders].map(([codec, depth]) => (depth > 8 ? `${codec} (${depth} bits)` : codec)).join(", ");
+    console.log(`🎞️  Transcodeur iGPU : décodage matériel ${list}${detected ? "" : " (vainfo absent : valeurs de l'iGPU Gen9)"} ; capacité ${budget.cpu} cœur${budget.cpu > 1 ? "s" : ""}, ${budget.gpu} conversions sur l'iGPU`);
   }
 
   // Chemin du fichier tel que vu par Plex -> chemin local
@@ -93,13 +173,9 @@ export function createTranscoder({ device, cacheDir, driver = "iHD", mediaMap = 
     });
   }
 
-  // Décodage matériel possible sur cet iGPU (Gen9) : H.264 et HEVC 8 bits ; le reste
-  // (HEVC 10 bits, AV1…) est décodé par le processeur puis envoyé à l'iGPU
-  function canHwDecode(video) {
-    if (video.codec === "h264") return video.pixFmt === "yuv420p" || video.pixFmt === "yuvj420p";
-    if (video.codec === "hevc") return video.pixFmt === "yuv420p";
-    return video.codec === "mpeg2video";
-  }
+  // Décodage par l'iGPU quand il connaît le codec et la profondeur ; sinon par le processeur, puis
+  // les images sont envoyées à l'iGPU (sur pve : le HEVC 10 bits, environ 30 % des films)
+  const canHwDecode = (video) => hwDecodable(video, decoders);
 
   function variantsFor(video) {
     const dispW = video.width * video.sar;
@@ -209,30 +285,43 @@ export function createTranscoder({ device, cacheDir, driver = "iHD", mediaMap = 
     }
   }
 
-  function runningCount() {
-    let n = 0;
-    for (const j of jobs.values()) if (j.proc) n++;
-    return n;
+  // Lecture en cours : un segment demandé dans la dernière minute, même si sa conversion est en
+  // pause parce qu'elle a assez d'avance (elle reprendra)
+  const isActive = (j, now) => now - j.lastAccess < ACTIVE_MS;
+
+  // Charge des conversions lancées (en cours ou en pause), sans celle donnée
+  function load(except) {
+    const used = { cpu: 0, gpu: 0, conversions: 0 };
+    for (const j of jobs.values()) {
+      if (!j.proc || j === except) continue;
+      used.cpu += j.cost.cpu;
+      used.gpu += j.cost.gpu;
+      used.conversions++;
+    }
+    return used;
   }
 
-  // Conversion qui sert une lecture en ce moment (segment demandé il y a peu, pas en pause)
-  const isBusy = (j, now) => !j.paused && now - j.lastAccess < BUSY_MS;
+  // Place pour une conversion (#70) : on arrête les conversions abandonnées, la plus ancienne
+  // d'abord (leurs segments prêts restent servis, elles repartent si on les redemande). Celle d'une
+  // lecture en cours n'est jamais arrêtée. Renvoie false si la place manque encore.
+  function makeRoom(job) {
+    const now = Date.now();
+    const idle = [...jobs.values()]
+      .filter((j) => j.proc && j !== job && !isActive(j, now))
+      .sort((a, b) => a.lastAccess - b.lastAccess);
+    while (!fitsBudget(load(job), job.cost, budget) && idle.length > 0) {
+      const victim = idle.shift();
+      console.log(`[tx ${victim.id}] conversion abandonnée arrêtée pour faire de la place`);
+      stopProcess(victim);
+    }
+    return fitsBudget(load(job), job.cost, budget);
+  }
 
   function launch(job, startSeg, reason) {
     stopProcess(job);
-    // Trop de conversions simultanées : on arrête d'abord une conversion abandonnée ou en pause
-    // (ses segments déjà prêts restent servis, elle repart si on la redemande), et seulement en
-    // dernier recours celle d'une lecture en cours
-    if (runningCount() >= MAX_RUNNING) {
-      const now = Date.now();
-      const victim = [...jobs.values()]
-        .filter((j) => j.proc && j !== job)
-        .sort((a, b) => isBusy(a, now) - isBusy(b, now) || a.lastAccess - b.lastAccess)[0];
-      if (victim) {
-        console.warn(`[tx ${victim.id}] conversion arrêtée pour faire de la place${isBusy(victim, now) ? " (lecture en cours !)" : ""}`);
-        stopProcess(victim);
-      }
-    }
+    // Lecture déjà acceptée (saut, reprise) : relancée même si la place manque, plutôt que de
+    // couper quelqu'un en plein film
+    if (!makeRoom(job)) console.warn(`[tx ${job.id}] capacité dépassée, conversion relancée quand même (lecture en cours)`);
     if (reason) console.log(`[tx ${job.id}] conversion relancée au segment ${startSeg} (${reason})`);
     job.variants.forEach((_, i) => fs.mkdirSync(path.join(job.dir, `v${i}`), { recursive: true }));
     const proc = spawn("ffmpeg", buildArgs(job, startSeg), {
@@ -292,6 +381,7 @@ export function createTranscoder({ device, cacheDir, driver = "iHD", mediaMap = 
     if (!duration) throw Object.assign(new Error("Durée inconnue"), { status: 409 });
 
     const id = crypto.randomBytes(8).toString("hex");
+    const hwDecode = canHwDecode(info.video) && !info.video.hdr;
     const job = {
       id,
       file,
@@ -300,7 +390,8 @@ export function createTranscoder({ device, cacheDir, driver = "iHD", mediaMap = 
       segCount: Math.ceil(duration / SEG),
       video: info.video,
       variants: variantsFor(info.video),
-      hwDecode: canHwDecode(info.video) && !info.video.hdr,
+      hwDecode,
+      cost: conversionCost(info.video, hwDecode),
       audioIndex: audio.index,
       proc: null,
       procStart: 0,
@@ -315,6 +406,16 @@ export function createTranscoder({ device, cacheDir, driver = "iHD", mediaMap = 
       // démarre de lui-même au bon endroit, sans dépendre d'un saut fait après le chargement
       startSeconds: Math.min(Math.max(0, Number(startSeconds) || 0), Math.max(0, duration - SEG)),
     };
+    // Machine pleine : la nouvelle lecture est refusée, plutôt que de dégrader toutes les autres.
+    // Pas de repli sur Plex, qui convertirait au processeur et chargerait encore plus la machine.
+    if (!makeRoom(job)) {
+      const { conversions } = load(job);
+      console.warn(`[tx] lecture refusée : ${conversions} conversion(s) en cours, ${path.basename(file)} (${hwDecode ? "iGPU" : "processeur"})`);
+      throw Object.assign(
+        new Error(`Le serveur convertit déjà ${conversions} vidéo${conversions > 1 ? "s" : ""} en ce moment. Réessayez dans quelques minutes.`),
+        { status: 503, busy: true }
+      );
+    }
     jobs.set(id, job);
     // Démarrer tout de suite au point de lecture : le premier segment est prêt plus tôt
     const startSeg = Math.min(job.segCount - 1, Math.max(0, Math.floor((startSeconds || 0) / SEG)));
@@ -417,12 +518,25 @@ export function createTranscoder({ device, cacheDir, driver = "iHD", mediaMap = 
   }, 15000);
   sweeper.unref();
 
+  // Ce que l'iGPU décode et la place restante (/api/tx/available)
+  function capacity() {
+    const used = load(null);
+    return {
+      decoders: Object.fromEntries(decoders),
+      decodersDetected: !!detected,
+      conversions: used.conversions,
+      cpu: { used: Math.round(used.cpu * 10) / 10, budget: budget.cpu },
+      gpu: { used: used.gpu, budget: budget.gpu },
+    };
+  }
+
   function status() {
     return [...jobs.values()].map((j) => ({
       id: j.id,
       file: path.basename(j.file),
       variants: j.variants.map((v) => v.id),
       hwDecode: j.hwDecode,
+      cost: j.cost,
       running: !!j.proc,
       paused: j.paused,
       procStart: j.procStart,
@@ -448,5 +562,6 @@ export function createTranscoder({ device, cacheDir, driver = "iHD", mediaMap = 
     segment,
     stopJob,
     status,
+    capacity,
   };
 }

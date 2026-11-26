@@ -56,6 +56,10 @@ const transcoder = process.env.NOMAD_TRANSCODER === "vaapi"
       cacheDir: CACHE_DIR,
       // "cheminPlex=cheminLocal" séparés par des virgules (identiques par défaut)
       mediaMap: (process.env.NOMAD_MEDIA_MAP || "").split(",").filter(Boolean).map((m) => m.split("=")),
+      // Capacité (#70) : cœurs pour les conversions décodées au processeur (défaut : tous moins un)
+      // et conversions simultanées sur l'iGPU (défaut : 4, mesuré sur l'HD Graphics 530 de pve)
+      cpuBudget: Number(process.env.NOMAD_TX_CPU) || undefined,
+      gpuSlots: Number(process.env.NOMAD_TX_GPU) || undefined,
     })
   : null;
 const offline = transcoder?.available ? createOffline({ transcoder, cacheDir: CACHE_DIR }) : null;

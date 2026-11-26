@@ -554,6 +554,14 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ media, localSrc, onClo
           sessionStatsRef.current.error = "missing";
           return;
         }
+        if (r.status === 503 && data.busy) {
+          // Serveur plein (#70) : Plex convertirait au processeur et chargerait encore plus la
+          // machine. « Réessayer » redemande une place.
+          setPhase("error");
+          setErrorText(data.error || "Le serveur est occupé. Réessayez dans quelques minutes.");
+          sessionStatsRef.current.error = "busy";
+          return;
+        }
         if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
         startAbr(data as TxSession, startTime, pref);
         return;
