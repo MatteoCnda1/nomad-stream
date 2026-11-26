@@ -22,6 +22,8 @@ export function transcodeRoutes({ plex, transcoder, offline }) {
       available: !!transcoder?.available,
       offline: !!offline,
       reason: transcoder ? transcoder.unavailableReason : "désactivé",
+      // Décodeurs de l'iGPU et place restante (conversions en cours, cœurs, places sur l'iGPU)
+      ...(transcoder?.available && { capacity: transcoder.capacity() }),
     });
   });
 
@@ -46,7 +48,8 @@ export function transcodeRoutes({ plex, transcoder, offline }) {
         variants: job.variants.map((v, i) => ({ index: i, id: v.id, width: v.width, height: v.height, kbps: v.kbps })),
       });
     } catch (error) {
-      res.status(error.status || 500).json({ error: error.message });
+      // busy : machine pleine, l'appli l'affiche au lieu de passer par Plex
+      res.status(error.status || 500).json({ error: error.message, ...(error.busy && { busy: true }) });
     }
   });
 
